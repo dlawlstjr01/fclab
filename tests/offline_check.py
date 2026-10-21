@@ -651,8 +651,8 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     check(len(filled) >= 1 and len(on_pitch) == len(filled),
           f"스쿼드: 파워 랭킹으로 채우기 → 경기장에 {len(filled)}자리 (표본 {len(sample)}명이라 다 못 채울 수 있다)")
     check(any('class="fc-sum"' in m.value and "총 급여" in m.value for m in at.markdown)
-          and any('class="fc-prow"' in m.value for m in at.markdown) and any('class="fc-tc"' in m.value for m in at.markdown),
-          "스쿼드: 평균 OVR · 총 급여/310 요약 · 자리별 선수 줄 · 팀컬러(소속 · 강화 · 관계)")
+          and any('class="fc-prow compact"' in m.value for m in at.markdown) and any('class="fc-tc"' in m.value for m in at.markdown),
+          "스쿼드: 평균 OVR · 총 급여/310 요약 · 자리별 선수 줄(좁은 칸용) · 팀컬러(소속 · 강화 · 관계)")
     code = filled[0]
     spid_t = int(squad_state[code]["pid"])
     app_db = FcDb(tmp / "storage" / "fclab.db")
@@ -666,6 +666,14 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     check(any(s_["code"] == code and s_["sub"].startswith(f"{expect} · ") for s_ in pitch_slots_of(at))
           and any(f">{expect}<small>{code} OVR" in m.value for m in at.markdown),
           f"스쿼드: {code} 자리 OVR = 그 포지션의 OVR 108 + 5강({GRADE_OVR[5]}) = {expect} — 경기장 · 목록 모두")
+    card_html = next(s_["html"] for s_ in pitch_slots_of(at) if s_["code"] == code)
+    start = card_html.find('<div class="ov">')
+    left_stack = card_html[start: card_html.find("</div>", start)]
+    check(start >= 0 and left_stack.find('class="fc-pay"') < left_stack.find('class="gd g5"') and 'class="lc"' not in card_html,
+          "스쿼드 경기장 카드: 급여(21) 밑에 강화(5)를 같은 왼쪽 칸에 차례로 — 따로 고정해 두어 겹치던 것을 없앴다")
+    row_html = next(m.value for m in at.markdown if 'class="fc-prow compact"' in m.value and f"{code} OVR" in m.value)
+    check('class="meta"' in row_html and '<span>스피드 <b>' in row_html and 'class="side"><div class="ovr">' in row_html,
+          "스쿼드 자리별 줄: 시즌 · 급여 · 강화 · 주발은 덩어리째 줄바꿈, 능력치는 '이름 숫자'가 갈라지지 않게, 오른쪽은 OVR 만")
     at.text_input(key="tac_save_name").input("점검 스쿼드").run()
     at.button(key="tac_save").click().run()
     at.button(key="tac_clear").click().run()
@@ -675,6 +683,14 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     at.button(key="tac_reset_all").click().run()
     check(at.session_state["tac_squad"][code]["grade"] is None and at.session_state["tac_squad"][code]["pid"] == str(spid_t),
           "스쿼드 ↺ 초기화 → 강화 · 신규 특성 · 이미지만 처음으로 (선수는 그대로)")
+    others_before = {c: v for c, v in at.session_state["tac_squad"].items() if c != code}
+    at.button(key=f"tac_remove_{code}").click().run()
+    check(code in at.session_state["tac_squad"] and at.session_state["tac_squad"][code] is None
+          and {c: v for c, v in at.session_state["tac_squad"].items() if c != code} == others_before
+          and not any(s_["code"] == code and s_["name"] for s_ in pitch_slots_of(at))
+          and at.button(key=f"tac_remove_{code}").disabled and "뺐습니다" in (at.session_state["tac_msg"] or ""),
+          f"스쿼드 ✕ 빼기 → {code} 자리만 비운다 (다른 자리 · 포메이션 그대로, 빈 자리의 빼기 버튼은 꺼짐)")
+    at.button(key="tac_load_0").click().run()   # 뒤 점검(AI 전술 추천)을 위해 다시 채운다
 
     at.session_state["player_id"] = str(spid_t)
     at.session_state["page"] = "player"

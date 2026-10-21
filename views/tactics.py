@@ -610,7 +610,7 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
             st.markdown(ui_parts.card_row(cards[code], info, grade=p["grade"], ovr=ovr, position=code,
                                           pay=card.get("pay"), exact=exact, ovr_label=f"{code} OVR",
                                           foot=card.get("foot"), crests=crests_of(ctx, info), wait_text="",
-                                          note=f"{usage}{bp(p['price'])}{team_mark}"), unsafe_allow_html=True)
+                                          note=f"{usage}{bp(p['price'])}{team_mark}", compact=True), unsafe_allow_html=True)
     explained = result.get("explain")
     if explained:
         st.markdown(explained["answer"])
@@ -647,11 +647,19 @@ def _slot_editor(ctx: Ctx, code: str, slot: dict) -> None:
               help="+1강 · 신규 특성 없음 · 기본 이미지로 (선수는 그대로)")
 
 
+def _remove(code: str) -> None:
+    """이 자리 선수를 뺀다 — 자리(포지션)는 그대로 두고 비운다."""
+    if _squad().get(code):
+        _squad()[code] = None
+        st.session_state.tac_msg = f"✕ {code} 자리의 선수를 뺐습니다 — 그 줄의 '✏️ 편집'으로 다시 넣을 수 있습니다."
+
+
 def _slot_list(ctx: Ctx, codes: list[str], view: dict) -> None:
-    """자리별 선수 줄 — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 · 주발 · 국적/팀컬러 · 특성 · 그 자리 OVR + 바꾸기."""
+    """자리별 선수 줄 — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 · 주발 · 국적/팀컬러 · 특성 · 그 자리 OVR
+    + 오른쪽에 '✏️ 편집'(바꾸기 · 강화 · 특성 · 이미지)과 '✕ 빼기'를 위아래로 (좁은 칸에서도 버튼이 찌그러지지 않게)."""
     for code in codes:
         slot = view["slots"].get(code)
-        row_col, pop_col = st.columns([5.4, 1.1], vertical_alignment="center")
+        row_col, pop_col = st.columns([5, 1.25], vertical_alignment="center")
         if slot:
             notes = []
             if slot.get("tc_bonus"):
@@ -661,11 +669,11 @@ def _slot_list(ctx: Ctx, codes: list[str], view: dict) -> None:
             note = " · ".join(notes)
             row_col.markdown(ui_parts.card_row(slot["player"], slot["info"], grade=slot["grade"], ovr=slot["ovr"], position=code,
                                                pay=slot["pay"], foot=slot["foot"], crests=crests_of(ctx, slot["info"]),
-                                               exact=slot["exact"], note=note, ovr_label=f"{code} OVR"),
+                                               exact=slot["exact"], note=note, ovr_label=f"{code} OVR", compact=True),
                              unsafe_allow_html=True)
         else:
-            row_col.markdown(f'<div class="fc-prow" style="grid-template-columns:1fr"><div>{ui_parts.position_badge(code)} '
-                             f'<span class="wait">비어 있음 — 오른쪽 \'바꾸기\'로 선수를 넣으세요</span></div></div>',
+            row_col.markdown(f'<div class="fc-prow compact" style="grid-template-columns:1fr"><div>{ui_parts.position_badge(code)} '
+                             f'<span class="wait">비어 있음 — 오른쪽 \'✏️ 편집\'으로 선수를 넣으세요</span></div></div>',
                              unsafe_allow_html=True)
         with pop_col.popover("✏️ 편집", width="stretch"):
             pick_key = f"tac_pick_{code}"
@@ -680,6 +688,8 @@ def _slot_list(ctx: Ctx, codes: list[str], view: dict) -> None:
             card_picker(ctx, key=pick_key, default_id=current, label="바꿀")
             grade_buttons("넣을 카드의 강화", f"{pick_key}_grade")
             st.button("이 카드로", key=f"tac_apply_{code}", type="primary", on_click=_apply, args=(code, pick_key))
+        pop_col.button("✕ 빼기", key=f"tac_remove_{code}", width="stretch", on_click=_remove, args=(code,),
+                       disabled=not slot, help=f"{code} 자리의 선수를 뺍니다 (자리는 비워 둡니다)")
 
 
 def render(ctx: Ctx) -> None:
@@ -741,7 +751,7 @@ def render(ctx: Ctx) -> None:
         st.markdown(chips_html(view, formation), unsafe_allow_html=True)
         st.caption("카드의 숫자는 그 자리에서의 OVR(강화 포함)입니다. * 는 카드 상세를 받기 전의 추정값입니다.")
     with list_col:
-        st.markdown(f"**자리별 선수** — {escape(formation)} · '바꾸기'로 교체 · 강화 등급")
+        st.markdown(f"**자리별 선수** — {escape(formation)} · '✏️ 편집'으로 교체 · 강화 등급, '✕ 빼기'로 그 자리 비우기")
         _slot_list(ctx, codes, view)
     st.markdown(teamcolor_html(view), unsafe_allow_html=True)
     with st.expander("📋 FC 온라인 팀 전술 항목"):

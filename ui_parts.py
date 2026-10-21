@@ -65,19 +65,20 @@ CARD_CSS = """
 .fc-grade.g11, .pc .gd.g11 { color: #2d2b43; background: linear-gradient(140deg, #f4f6ff 0%, #c9d2f2 45%, #9fb0e6 100%); border: 1px solid #5274c0; }
 
 
-/* 경기장 자리의 카드 — OVR · 포지션 · 급여(왼쪽 위), 보유 신규 특성(오른쪽 위), 강화(왼쪽 아래), 국기 · 이름(아래), 밑에 시세 */
+/* 경기장 자리의 카드 — 왼쪽 위 한 칸에 OVR · 포지션 · 급여 · 강화를 차례로 쌓는다 (공식 카드의 playerCardInfoSide 처럼).
+   강화를 따로 고정 위치에 두면 급여 육각형이 길어질 때 겹친다 — 같은 칸에 쌓아 겹칠 수 없게 하고, 크기는 이름(아래 77%)에
+   닿지 않게 줄였다. 보유 신규 특성(오른쪽 위), 국기 · 이름(아래), 카드 밑에 시세 */
 .pc { width: 100%; }
-.pc .fc-cv .ov b { font-size: calc(var(--w) * 29cqw); }
-.pc .fc-cv .ov span { font-size: calc(var(--w) * 17cqw); }
-.pc .fc-cv .ov .fc-pay { width: calc(var(--w) * 25cqw); height: calc(var(--w) * 28cqw); font-size: calc(var(--w) * 14cqw);
-  margin-top: .5cqw; color: #e9eef6; background: rgba(40,46,58,.85); text-shadow: none; }
+.pc .fc-cv .ov { top: calc(var(--y0) * 100% + var(--h) * 6%); gap: .8cqw; }
+.pc .fc-cv .ov b { font-size: calc(var(--w) * 26cqw); }
+.pc .fc-cv .ov span { font-size: calc(var(--w) * 15cqw); }
+.pc .fc-cv .ov .fc-pay { width: calc(var(--w) * 22cqw); height: calc(var(--w) * 24cqw); font-size: calc(var(--w) * 13cqw);
+  color: #e9eef6; background: rgba(40,46,58,.85); text-shadow: none; }
 .pc .fc-cv.light .ov .fc-pay { color: #fff; background: #6b6f78; }
-.pc .lc { position: absolute; z-index: 1; left: calc(var(--x0) * 100% + var(--w) * 2%); width: calc(var(--w) * 30%);
-  top: calc(var(--y0) * 100% + var(--h) * 60%); display: flex; justify-content: center; }
 .pc .fc-cv .ov small { font-size: calc(var(--w) * 14cqw); font-weight: 800; color: #ffd166; }
 .pc .tr { position: absolute; z-index: 1; right: calc((1 - var(--x0) - var(--w)) * 100% + var(--w) * 4%);
   top: calc(var(--y0) * 100% + var(--h) * 4%); width: calc(var(--w) * 28%); filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
-.pc .gd { min-width: calc(var(--w) * 22cqw); padding: .3cqw 1cqw; border-radius: 3px; font-size: calc(var(--w) * 17cqw);
+.pc .gd { min-width: calc(var(--w) * 20cqw); padding: .3cqw 1cqw; border-radius: 3px; font-size: calc(var(--w) * 14cqw);
   font-weight: 900; font-style: normal; line-height: 1.2; text-align: center; text-shadow: none;
   box-shadow: 0 1px 3px rgba(0,0,0,.5); }
 .pc .nm { position: absolute; z-index: 1; left: calc(var(--x0) * 100% + var(--w) * 4%); width: calc(var(--w) * 92%);
@@ -256,7 +257,7 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 /* 선수 줄 — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 / 시즌 이름 · 주발 / 국적 · 팀컬러 / 능력치 · 특성 · OVR */
 .fc-prow {{ display: grid; grid-template-columns: 74px minmax(0, 1fr) auto; gap: 14px; align-items: center;
   padding: 10px 16px 10px 10px; border-radius: 16px; background: {t['surface']}; border: 1px solid {t['border']};
-  margin-bottom: 8px; }}
+  margin-bottom: 8px; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.45; }}
 .fc-prow .l1 {{ display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }}
 .fc-prow .l1 .ssn {{ height: 17px; }}
 .fc-prow .l1 .nm {{ font-size: 15.5px; font-weight: 800; color: {t['ink']}; }}
@@ -265,7 +266,9 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 .fc-prow .foot b {{ color: {t['ink']}; }}
 .fc-prow .l3 {{ display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; min-height: 18px; }}
 .fc-prow .l3 img {{ height: 18px; max-width: 26px; object-fit: contain; }}
-.fc-prow .l4 {{ font-size: 11.5px; color: {t['ink2']}; margin-top: 4px; font-variant-numeric: tabular-nums; }}
+.fc-prow .l4 {{ display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: {t['ink2']}; margin-top: 4px;
+  font-variant-numeric: tabular-nums; }}
+.fc-prow .l4 span {{ white-space: nowrap; }}
 .fc-prow .l4 b {{ color: {t['ink']}; font-weight: 700; }}
 .fc-prow .note {{ font-size: 12px; color: {t['ink2']}; margin-top: 4px; }}
 .fc-prow .side {{ display: flex; align-items: center; gap: 12px; }}
@@ -280,6 +283,21 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 .fc-prow .wait {{ font-size: 11.5px; color: {t['muted']}; }}
 @media (max-width: 760px) {{ .fc-prow {{ grid-template-columns: 58px minmax(0, 1fr); }}
   .fc-prow .side {{ grid-column: 1 / -1; justify-content: space-between; }} }}
+/* 좁은 칸용 (스쿼드 메이커 자리별 선수) — 오른쪽은 OVR 만, 특성은 아래 줄. 이름 한 줄 · 나머지는 덩어리째 줄바꿈 */
+.fc-prow.compact {{ grid-template-columns: 56px minmax(0, 1fr) auto; gap: 10px; padding: 9px 12px 9px 8px; }}
+.fc-prow.compact .l1 {{ flex-wrap: nowrap; min-width: 0; }}
+.fc-prow.compact .l1 .nm {{ min-width: 0; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.fc-prow .meta {{ display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; font-size: 12.5px;
+  color: {t['ink2']}; }}
+.fc-prow .meta > * {{ white-space: nowrap; }}
+.fc-prow .meta .ss {{ display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: {t['ink']}; }}
+.fc-prow .meta .ssn {{ height: 15px; }}
+.fc-prow .meta .fc-pay {{ width: 22px; height: 24px; font-size: 10.5px; }}
+.fc-prow.compact .traits {{ display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }}
+.fc-prow.compact .traits img {{ width: 24px; height: 24px; padding: 2px; }}
+.fc-prow.compact .ovr {{ font-size: 26px; min-width: 46px; }}
+@media (max-width: 760px) {{ .fc-prow.compact {{ grid-template-columns: 48px minmax(0, 1fr) auto; }}
+  .fc-prow.compact .side {{ grid-column: auto; }} }}
 div[class*="st-key-prow_"] {{ position: relative; gap: 0; }}
 div[class*="st-key-prow_"] [data-testid="stElementContainer"]:has(.stButton) {{ position: absolute; inset: 0 0 8px 0; z-index: 3;
   margin: 0; }}
@@ -516,9 +534,9 @@ def position_badge(position: str | None) -> str:
 
 
 def card_visual(player: dict, ovr: int | None = None, position: str | None = None, grade: int | None = None,
-                high: bool = False, pay: int | None = None, inner: str = "", exact: bool = True) -> str:
+                high: bool = False, pay: int | None = None, inner: str = "", exact: bool = True, stack: str = "") -> str:
     """시즌 카드 배경 위에 선수 — 왼쪽 위에 OVR · 포지션(· 급여), 오른쪽 위에 강화. 배경 · 선수 이미지는 받아 둔 사본으로.
-    inner 는 카드 안에 더 얹을 것 (경기장 카드의 특성 · 강화 · 이름)."""
+    inner 는 카드 안에 더 얹을 것 (경기장 카드의 특성 · 이름), stack 은 왼쪽 위 칸의 급여 밑에 이어 쌓을 것 (경기장 카드의 강화)."""
     code = season_code(player.get("season_img"))
     bg_url = CARD_BG.format(code=code) if code else None
     bg = image(bg_url) if code else ""
@@ -529,11 +547,11 @@ def card_visual(player: dict, ovr: int | None = None, position: str | None = Non
         if sharp and not sharp.startswith("http"):   # 받아 둔 고화질 이미지가 있을 때만 (없는 카드도 많다)
             figure = f'<img src="{escape(sharp)}" alt="{escape(player["name"])}">'
     overlay = ""
-    if ovr:
+    if ovr or stack:
         kind = POSITION_KIND.get(position or "", "mf")
-        overlay = (f'<div class="ov"><b>{ovr}{"" if exact else "<small>*</small>"}</b>'
+        overlay = ('<div class="ov">' + (f'<b>{ovr}{"" if exact else "<small>*</small>"}</b>' if ovr else "")
                    + (f'<span class="{kind}">{escape(position)}</span>' if position else "")
-                   + (f'<i class="fc-pay" title="급여">{pay}</i>' if pay is not None else "") + "</div>")
+                   + (f'<i class="fc-pay" title="급여">{pay}</i>' if pay is not None else "") + stack + "</div>")
     if grade:
         overlay += f'<div class="gr">{grade_badge(grade)}</div>'
     box = ""
@@ -560,16 +578,15 @@ def bp_short(value: int | None) -> str:
 
 def pitch_card(player: dict, code: str, ovr: int | None, exact: bool = True, grade: int | None = None,
                pay: int | None = None, trait: dict | None = None, flag: str = "", price: str = "") -> str:
-    """경기장 자리의 선수 카드 (공식 스쿼드 메이커처럼) — 시즌 카드 위에 그 자리 OVR · 포지션 · 급여, 오른쪽 위 보유 신규 특성,
-    왼쪽 아래 강화, 아래 국기 · 이름. 카드 밑에 시세 · 구단 가치 중 비율. trait = {name, icon}."""
+    """경기장 자리의 선수 카드 (공식 스쿼드 메이커처럼) — 시즌 카드 위 왼쪽 칸에 그 자리 OVR · 포지션 · 급여 · 강화를 차례로,
+    오른쪽 위 보유 신규 특성, 아래 국기 · 이름. 카드 밑에 시세 · 구단 가치 중 비율. trait = {name, icon}."""
     g = grade or 1
-    tier = grade_tier(g)
     flag_html = f'<img src="{escape(image(flag))}" alt="">' if flag and image(flag) else ""
     inner = (f'<img class="tr" src="{escape(image(trait["icon"]))}" alt="" title="보유 신규 특성: {escape(trait["name"])}">'
              if trait else "")
-    inner += (f'<div class="lc"><i class="gd {tier}">{g}</i></div><div class="nm">{escape(player["name"])}</div>'
-              + (f'<div class="fl">{flag_html}</div>' if flag_html else ""))
-    return (f'<div class="pc">{card_visual(player, ovr, code, pay=pay, inner=inner, exact=exact)}'
+    inner += f'<div class="nm">{escape(player["name"])}</div>' + (f'<div class="fl">{flag_html}</div>' if flag_html else "")
+    grade_html = f'<i class="gd {grade_tier(g)}" title="강화 {g}단계">{g}</i>'
+    return (f'<div class="pc">{card_visual(player, ovr, code, pay=pay, inner=inner, exact=exact, stack=grade_html)}'
             f'<div class="price">{price}</div></div>')
 
 
@@ -587,24 +604,27 @@ def foot_text(foot: dict | None) -> str:
 def card_row(player: dict, info: dict | None = None, *, grade: int | None = None, ovr: int | None = None,
              position: str | None = None, pay: int | None = None, foot: dict | None = None,
              crests: list[tuple[str, str]] = (), exact: bool = True, note: str = "", ovr_label: str = "",
-             wait_text: str = "국적 · 팀컬러 불러오는 중…") -> str:
+             wait_text: str = "국적 · 팀컬러 불러오는 중…", compact: bool = False) -> str:
     """선수 줄 (공식 스쿼드 메이커의 선수 목록처럼) — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 / 시즌 이름 · 주발 /
-    국적 · 팀컬러 / 요약 능력치(강화 반영) / 특성 · OVR. info(카드 상세)가 아직 없으면 그 칸은 '불러오는 중'."""
+    국적 · 팀컬러 / 요약 능력치(강화 반영) / 특성 · OVR. info(카드 상세)가 아직 없으면 그 칸은 '불러오는 중'.
+
+    compact = 좁은 칸(스쿼드 메이커의 자리별 선수 · AI 추천 결과)용 — 오른쪽에는 OVR 만 두고 특성은 아래 줄로 내려,
+    가운데 글자 칸이 넓어진다. 이름은 한 줄(넘치면 …), 시즌 · 급여 · 강화 · 주발은 덩어리째 줄을 바꾼다."""
     info = info or {}
     grade = grade or 1
     position = position or info.get("position") or ""
     pay = pay if pay is not None else info.get("pay")
     season_icon = image(player.get("season_img"))
-    l1 = (position_badge(position) + (f'<img class="ssn" src="{escape(season_icon)}" alt="">' if season_icon else "")
-          + f'<span class="nm">{escape(player["name"])}</span>'
-          + (f'<span class="fc-pay" title="급여">{pay}</span>' if pay is not None else "") + grade_badge(grade))
+    season_img = f'<img class="ssn" src="{escape(season_icon)}" alt="">' if season_icon else ""
+    pay_html = f'<span class="fc-pay" title="급여">{pay}</span>' if pay is not None else ""
+    name_html = f'<span class="nm" title="{escape(player["name"])}">{escape(player["name"])}</span>'
     foot_html = foot_text(foot or info.get("foot_lr"))
-    l2 = escape(player.get("season", "")) + (f"<i>·</i>{foot_html}" if foot_html else "")
     icons = "".join(f'<img src="{escape(image(url))}" alt="" title="{escape(name)}">' for name, url in crests if image(url))
     l3 = icons or (f'<span class="wait">{escape(wait_text)}</span>' if not info and wait_text else "")
     summary = info.get("summary") or {}
     bonus = GRADE_OVR[grade]
-    l4 = " · ".join(f"{k} <b>{v + bonus}</b>" for k, v in summary.items() if k in SUMMARY)
+    # 능력치 하나('속력 120')는 한 덩어리 — 줄을 바꿔도 이름과 숫자가 갈라지지 않게
+    l4 = "".join(f"<span>{k} <b>{v + bonus}</b></span>" for k, v in summary.items() if k in SUMMARY)
     traits = info.get("traits") or []
     trait_html = "".join(f'<img class="{"new" if t["new"] else ""}" src="{escape(image(t["icon"]))}" alt="{escape(t["name"])}" '
                          f'title="{escape(t["name"])}{" (신규 특성)" if t["new"] else ""}">' for t in traits[:5])
@@ -612,9 +632,20 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
         trait_html += f"<small>+{len(traits) - 5}</small>"
     shown = "-" if ovr is None else f"{ovr}{'' if exact else '*'}"
     label = f"<small>{escape(ovr_label)}</small>" if ovr_label else ""
+    note_html = f'<div class="note">{escape(note)}</div>' if note else ""
+    if compact:
+        meta = (f'<span class="ss" title="{escape(player.get("season", ""))}">{season_img}{escape(player.get("season_short", ""))}</span>'
+                + pay_html + grade_badge(grade) + foot_html)
+        return (f'<div class="fc-prow compact"><div>{card_visual(player)}</div><div>'
+                f'<div class="l1">{position_badge(position)}{name_html}</div><div class="meta">{meta}</div>'
+                + (f'<div class="l3">{l3}</div>' if l3 else "") + (f'<div class="l4">{l4}</div>' if l4 else "")
+                + (f'<div class="traits">{trait_html}</div>' if trait_html else "") + note_html
+                + f'</div><div class="side"><div class="ovr">{shown}{label}</div></div></div>')
+    l1 = position_badge(position) + season_img + name_html + pay_html + grade_badge(grade)
+    l2 = escape(player.get("season", "")) + (f"<i>·</i>{foot_html}" if foot_html else "")
     return (f'<div class="fc-prow"><div>{card_visual(player)}</div><div>'
             f'<div class="l1">{l1}</div><div class="l2">{l2}</div><div class="l3">{l3}</div>'
-            + (f'<div class="l4">{l4}</div>' if l4 else "") + (f'<div class="note">{escape(note)}</div>' if note else "")
+            + (f'<div class="l4">{l4}</div>' if l4 else "") + note_html
             + f'</div><div class="side"><div class="traits">{trait_html}</div><div class="ovr">{shown}{label}</div></div></div>')
 
 
