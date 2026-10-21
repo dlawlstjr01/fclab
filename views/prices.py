@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from html import escape
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -36,6 +37,29 @@ def _progress(ctx: Ctx, spids: list[int], table_sizes: int) -> bool:
         st.progress(min(1.0, table_sizes / total),
                     text=f"강화 단계별 시세를 받는 중 — 남은 요청 {waiting}건 (요청 간격을 지켜 카드 1장에 약 16초)")
     return bool(waiting)
+
+
+def _history_chart(history: list[list], theme: str) -> alt.Chart:
+    """일별 시세 선 그래프 — 날짜 축(가로 라벨 몇 개만) · 금액은 억/만 · 마우스를 올린 날의 값."""
+    frame = pd.DataFrame(history, columns=["날짜", "BP"])
+    frame["날짜"] = pd.to_datetime(frame["날짜"])
+    span = (frame["날짜"].iloc[-1] - frame["날짜"].iloc[0]).days
+    color = "#3987e5" if theme == "dark" else "#2a78d6"
+    x = alt.X("날짜:T", title=None, axis=alt.Axis(format="%y.%m" if span > 180 else "%m.%d", labelAngle=0,
+                                                 tickCount=6, labelOverlap="greedy", grid=False))
+    y = alt.Y("BP:Q", title=None, scale=alt.Scale(zero=False),
+              axis=alt.Axis(tickCount=5, labelExpr="datum.value >= 1e12 ? format(datum.value / 1e12, '.1f') + '조'"
+                            " : datum.value >= 1e8 ? format(datum.value / 1e8, '.1f') + '억'"
+                            " : datum.value >= 1e4 ? format(datum.value / 1e4, ',.0f') + '만' : format(datum.value, ',')"))
+    hover = alt.selection_point(fields=["날짜"], nearest=True, on="pointerover", empty=False)
+    base = alt.Chart(frame).encode(x=x, y=y)
+    line = base.mark_line(strokeWidth=2, color=color)
+    points = base.mark_point(size=60, filled=True, color=color).encode(
+        opacity=alt.condition(hover, alt.value(1), alt.value(0)),
+        tooltip=[alt.Tooltip("날짜:T", format="%Y-%m-%d"), alt.Tooltip("BP:Q", format=",")]).add_params(hover)
+    rule = base.mark_rule(color="#888888", strokeWidth=1).encode(
+        opacity=alt.condition(hover, alt.value(0.6), alt.value(0)))
+    return (line + rule + points).properties(height=240)
 
 
 def _filled_note(ctx: Ctx, spid: int) -> None:
@@ -100,8 +124,7 @@ def _price_view(ctx: Ctx, player: dict, mine: list[dict] | None) -> None:
     chart_col, sig_col = st.columns([1.5, 1], gap="medium")
     with chart_col:
         if row["history"]:
-            frame = pd.DataFrame(row["history"], columns=["날짜", "BP"]).set_index("날짜")
-            st.line_chart(frame, y="BP", height=240)
+            st.altair_chart(_history_chart(row["history"], ctx.theme), width="stretch")
             st.caption(f"+{grade} 일별 시세 {len(row['history'])}일 · 받은 시각 {row['fetched_at'][:16].replace('T', ' ')}")
         else:
             st.caption("일별 시세 기록이 없습니다.")
