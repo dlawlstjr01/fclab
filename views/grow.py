@@ -1,0 +1,214 @@
+"""⚒️ 강화 시뮬레이터 — FC 온라인 공식 확률표(data_prep/enhance.py)로 한 번씩 강화해 보고, 목표 등급까지의 확률을 계산한다.
+
+- 부스트 게이지: 직접 정하거나(%), 소모 선수를 넣어 데이터센터 '강화 부스트 도우미'로 정확히 계산한다
+  (https://fconline.nexon.com/datacenter/playergrow 와 같은 계산).
+- 같은 선수 소모: 실패했을 때 복구 등급 표와 크리티컬(+2, 1~4강) 확률이 바뀐다.
+- 시세: 이 카드의 강화 단계별 현재가(받아 둔 것) — 강화하는 비용과 목표 등급을 바로 사는 값을 견줘 본다.
+- 목표까지: 등급을 상태로 둔 마르코프 연쇄로 정확히 — 평균 시도 횟수 · N번 안에 닿을 확률 · 50% / 90% 가 닿는 횟수.
+확률 · 복구 표는 공식 공지 그대로다. '한 번 강화'는 그 확률로 뽑는 모의 실험이라 실제 게임 결과를 보장하지 않는다.
+"""
+
+from __future__ import annotations
+
+import random
+from html import escape
+
+import pandas as pd
+import streamlit as st
+
+import ui_parts
+from data_prep.enhance import CRITICAL, GRADE_OVR, MAX_GRADE, RECOVER, SUCCESS, attempt, failure_table, odds, success_rate
+from data_prep.market import bp
+from views.common import Ctx, card_basics, friendly_error, get_player, log
+from views.widgets import card_picker, grade_buttons
+
+MAX_MATERIALS = 5
+
+
+def _count(n: float | None) -> str:
+    if n is None:
+        return "닿지 않음"
+    if n >= 10**8:
+        return f"약 {n / 10**8:,.0f}억 번"
+    if n >= 10**4:
+        return f"약 {n / 10**4:,.0f}만 번"
+    return f"{n:,.0f}번"
+
+
+def _reset_run(spid: int, start: int) -> None:
+    st.session_state.gr_run = {"spid": spid, "start": start, "grade": start, "history": []}
+
+
+def _one_try(boost: float, same_grade: int | None) -> None:
+    run = st.session_state.gr_run
+    before = run["grade"]
+    if before >= MAX_GRADE:
+        return
+    after, outcome = attempt(before, boost, same_grade, random.Random())
+    run["grade"] = after
+    run["history"].insert(0, {"from": before, "to": after, "outcome": outcome, "rate": success_rate(before, boost)})
+
+
+def _materials(ctx: Ctx, spid: int, grade: int) -> tuple[float | None, int | None]:
+    """소모 선수를 넣어 데이터센터에서 부스트 % 를 계산 → (부스트 %, 소모 선수 가치 합)."""
+    mats = st.session_state.setdefault("gr_mats", [])
+    for i, m in enumerate(list(mats)):
+        n_col, x_col = st.columns([4, 1], vertical_alignment="center")
+        n_col.markdown(f"**{escape(m['name'])}** · {escape(m['season'])} +{m['grade']}")
+        if x_col.button("빼기", key=f"gr_mat_x_{i}", width="stretch"):
+            mats.pop(i)
+            st.session_state.pop("gr_boost", None)
+            st.rerun()
+    if len(mats) < MAX_MATERIALS:
+        with st.expander(f"➕ 소모 선수 넣기 ({len(mats)}/{MAX_MATERIALS})", expanded=not mats):
+            picked = card_picker(ctx, key="gr_mat_pick", label="소모할")
+            m_grade = grade_buttons("소모 선수 강화", "gr_mat_grade")
+            if picked and st.button("이 선수 소모하기", key="gr_mat_add", type="primary"):
+                card = get_player(ctx, picked)
+                mats.append({"spid": card["spid"], "name": card["name"], "season": card["season_short"], "grade": m_grade})
+                st.session_state.pop("gr_boost", None)
+                st.rerun()
+    if not mats:
+        return None, None
+    key = (spid, grade, tuple((m["spid"], m["grade"]) for m in mats))
+    saved = st.session_state.get("gr_boost")
+    if not saved or saved["key"] != key:
+        if ctx.datacenter is None:
+            st.caption("데이터센터 기능이 꺼져 있어 부스트를 계산할 수 없습니다. 게이지를 직접 정하세요.")
+            return None, None
+        try:
+            with st.spinner("데이터센터 '강화 부스트 도우미'로 계산하는 중…"):
+                result = ctx.datacenter.boost(spid, grade, [(m["spid"], m["grade"]) for m in mats])
+        except Exception as exc:  # noqa: BLE001
+            log.exception("강화 부스트 계산 실패")
+            st.caption(friendly_error(exc))
+            return None, None
+        saved = st.session_state.gr_boost = {"key": key, "result": result}
+    result = saved["result"]
+    if not result:
+        st.caption("부스트를 계산하지 못했습니다. 소모 선수를 바꾸거나 게이지를 직접 정하세요.")
+        return None, None
+    return min(result["boost"], 100.0), result.get("materials_bp")
+
+
+def _table_html() -> str:
+    rows = "".join(
+        f"<tr><td>+{g} → +{g + 1}</td><td>{SUCCESS[g]}%</td><td>OVR +{GRADE_OVR[g + 1] - GRADE_OVR[g]}</td>"
+        f"<td>{', '.join(f'+{k} {v:g}%' for k, v in sorted(RECOVER[g].items(), reverse=True))}</td></tr>"
+        for g in range(1, MAX_GRADE))
+    return ('<div style="overflow-x:auto"><table class="fc-grow-table"><thead><tr><th>강화</th><th>성공 (게이지 100%)</th>'
+            '<th>오르는 OVR</th><th>실패 시 복구 (같은 선수 소모 안 함)</th></tr></thead><tbody>' + rows + "</tbody></table></div>")
+
+
+def render(ctx: Ctx) -> None:
+    st.markdown('<div class="fc-section">⚒️ 강화 시뮬레이터<small>공식 확률표 그대로 — 한 번씩 강화해 보고, 목표 등급까지 '
+                '몇 번이 드는지 계산합니다 · 부스트는 데이터센터 강화 부스트 도우미로 계산</small></div>', unsafe_allow_html=True)
+    st.markdown("<style>.fc-grow-table{width:100%;border-collapse:collapse;font-size:13px}.fc-grow-table th,.fc-grow-table td"
+                "{padding:6px 8px;border-bottom:1px solid rgba(127,127,127,.25);text-align:left;white-space:nowrap}</style>",
+                unsafe_allow_html=True)
+    set_col, out_col = st.columns([1, 1.25], gap="large")
+    with set_col:
+        picked = card_picker(ctx, key="gr_pick", label="강화할")
+    if not picked:
+        out_col.info("왼쪽에서 강화할 카드를 고르세요. 아래 표는 공식 강화 확률입니다.")
+        with st.expander("📋 공식 강화 확률표 (26.4 기준)", expanded=True):
+            st.markdown(_table_html(), unsafe_allow_html=True)
+        return
+    player = get_player(ctx, picked)
+    spid = player["spid"]
+    with set_col:
+        start = grade_buttons("지금 등급", "gr_start", options=range(1, MAX_GRADE))
+        target = grade_buttons("목표 등급", "gr_target", options=range(start + 1, MAX_GRADE + 1))
+        mode = st.segmented_control("부스트 게이지", ["직접 정하기", "소모 선수로 계산"], default="직접 정하기", key="gr_mode",
+                                    help="게이지가 100% 보다 낮으면 성공 확률 = 공식 확률 × 게이지 비율 (공식 공지)")
+        cost = None
+        if mode == "소모 선수로 계산":
+            boost, cost = _materials(ctx, spid, start)
+            if boost is None:
+                boost = 100.0
+                st.caption("소모 선수를 넣으면 게이지를 계산합니다 — 그전에는 100% 로 봅니다.")
+            else:
+                st.success(f"강화 부스트 게이지 **{boost:.1f}%** · 소모 선수 가치 합 {bp(cost)}")
+        else:
+            boost = float(st.slider("게이지 (%)", 0, 100, 100, key="gr_boost_pct"))
+        same = st.toggle("같은 선수 카드를 소모 (실패 시 복구 · 크리티컬이 달라짐)", key="gr_same")
+        same_grade = None
+        if same:
+            st.session_state.setdefault("gr_same_g", start)
+            same_grade = grade_buttons("소모하는 같은 선수의 등급", "gr_same_g", options=range(1, start + 1))
+        if cost is None:
+            per_try = st.number_input("1회 강화에 쓰는 소모 선수 값 (억 BP, 선택)", min_value=0.0, value=0.0, step=0.1,
+                                      key="gr_cost", help="넣으면 목표까지의 예상 비용을 계산합니다")
+            cost = int(per_try * 10**8) or None
+
+    run = st.session_state.get("gr_run")
+    if not run or run["spid"] != spid or run["start"] != start:
+        _reset_run(spid, start)
+        run = st.session_state.gr_run
+    rate = success_rate(run["grade"], boost) if run["grade"] < MAX_GRADE else 0.0
+    critical = CRITICAL.get((run["grade"], min(same_grade, run["grade"]))) if same_grade else None
+    basics = card_basics(ctx, [spid]).get(spid, {})
+    base_ovr, position = basics.get("ovr"), basics.get("position")
+
+    with out_col:
+        card_col, info_col = st.columns([1, 1.6], vertical_alignment="center")
+        card_col.markdown(ui_parts.card_visual(player, (base_ovr or 0) + GRADE_OVR[run["grade"]] if base_ovr else None,
+                                               position, run["grade"], high=True), unsafe_allow_html=True)
+        with info_col:
+            st.markdown(f"### {escape(player['name'])} {ui_parts.grade_badge(run['grade'])}", unsafe_allow_html=True)
+            st.caption(f"{player['season']} · 시작 +{start} → 목표 +{target}")
+            if run["grade"] < MAX_GRADE:
+                fails = failure_table(run["grade"], same_grade)
+                st.markdown(f"다음 강화 **+{run['grade']} → +{run['grade'] + 1}** · 성공 **{rate:.2f}%** "
+                            f"(공식 {SUCCESS[run['grade']]}% × 게이지 {boost:.0f}%)"
+                            + (f" · 크리티컬(+2) {critical:g}%" if critical else ""))
+                st.caption("실패하면 → " + ", ".join(f"+{g} {p:g}%" for g, p in sorted(fails.items(), reverse=True)))
+            else:
+                st.success("최고 등급(+13)입니다.")
+            b1, b2 = st.columns(2)
+            b1.button("⚒️ 한 번 강화", key="gr_try", type="primary", width="stretch", on_click=_one_try, args=(boost, same_grade),
+                      disabled=run["grade"] >= MAX_GRADE)
+            b2.button("🔄 처음부터", key="gr_reset", width="stretch", on_click=_reset_run, args=(spid, start))
+        if run["history"]:
+            tries = len(run["history"])
+            ok = sum(1 for h in run["history"] if h["outcome"] != "실패")
+            st.markdown(f"**시도 {tries}번** · 성공 {ok} · 실패 {tries - ok}"
+                        + (f" · 소모 선수 약 {bp(cost * tries)}" if cost else ""))
+            icon = {"성공": "✅", "크리티컬": "💥", "실패": "❌"}
+            st.markdown("  \n".join(f"{icon[h['outcome']]} +{h['from']} → **+{h['to']}** {h['outcome']} "
+                                    f"<small>(확률 {h['rate']:.2f}%)</small>" for h in run["history"][:8]),
+                        unsafe_allow_html=True)
+
+    st.markdown(f'<div class="fc-section">🎲 +{start} → +{target} 까지<small>공식 확률로 정확히 계산 (모의 실험 아님) · 게이지 '
+                f'{boost:.0f}%{" · 같은 선수 +" + str(same_grade) + " 소모" if same_grade else ""}</small></div>',
+                unsafe_allow_html=True)
+    result = odds(start, target, boost, same_grade)
+    cells = [("평균 시도", _count(result["mean"])), ("절반은 이 안에", _count(result["median"])),
+             ("90%는 이 안에", _count(result["p90"])), ("100번 안에 닿을 확률", f"{result['within'][100] * 100:.2f}%")]
+    if cost and result["mean"]:
+        cells.append(("예상 소모 비용 (평균)", bp(int(cost * result["mean"]))))
+    prices = ctx.market.table(spid) if ctx.market.enabled else {}
+    if not prices and ctx.market.enabled:
+        ctx.market.want([spid])
+    buy = (prices.get(target) or {}).get("current")
+    own = (prices.get(start) or {}).get("current")
+    if buy:
+        cells.append((f"+{target} 바로 사기 (현재가)", bp(buy)))
+    st.markdown('<div class="fc-sum">' + "".join(f"<div><span>{escape(k)}</span><b>{escape(v)}</b></div>" for k, v in cells)
+                + "</div>", unsafe_allow_html=True)
+    if buy and own and cost and result["mean"]:
+        diff = buy - own - int(cost * result["mean"])
+        st.caption(f"+{start} 현재가 {bp(own)} + 평균 소모 비용 {bp(int(cost * result['mean']))} vs +{target} 현재가 {bp(buy)} → "
+                   + (f"강화가 평균 {bp(diff)} 싸다" if diff > 0 else f"바로 사는 쪽이 평균 {bp(-diff)} 싸다")
+                   + " (평균값 기준 · 실패 때 등급이 내려가 값이 떨어지는 것은 반영하지 않음)")
+    within = " · ".join(f"{t}번 안에 {p * 100:.2f}%" for t, p in result["within"].items())
+    st.caption(f"목표에 닿을 확률 — {within}")
+    if result["curve"] and result["mean"]:
+        curve = pd.DataFrame([(t, p * 100) for t, p in result["curve"]], columns=["시도 횟수", "누적 도달 확률 (%)"])
+        st.line_chart(curve, x="시도 횟수", y="누적 도달 확률 (%)", height=220)
+    first = ", ".join(f"+{g} {p * 100:.1f}%" for g, p in sorted(result["first"].items(), reverse=True))
+    st.caption(f"첫 시도 결과 (등급별): {first}")
+    with st.expander("📋 공식 강화 확률표 (26.4 기준)"):
+        st.markdown(_table_html(), unsafe_allow_html=True)
+        st.caption("출처: FC 온라인 공지 '선수 강화 성공 확률, 강화 실패 시 복구 확률 및 크리티컬 확률 안내'. 강화 보호권 · BP 강화 등급 "
+                   "보호를 쓰지 않았을 때. 같은 선수를 소모하면 복구 표와 크리티컬이 달라집니다 (위 설정에 반영).")

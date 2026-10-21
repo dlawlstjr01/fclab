@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 
 import openai
@@ -17,26 +18,32 @@ import streamlit as st
 
 import config
 import llm
+import ui_parts
 from data_prep.collector import Collector
 from data_prep.db import FcDb
-from data_prep.market import MarketClient
+from data_prep.datacenter import DatacenterClient
 from data_prep.nexon_api import NexonClient, NexonError, NexonQuotaError, split_spid
 from data_prep.player_builder import CardCatalog
-from data_prep.players import SAVE_MIN_SHOTS, load_players, player_label
+from data_prep.players import load_players, player_label
 from data_prep.wiki_api import WikiClient, WikiError
 from rag.citations import cited_evidence
 from rag.graph import build_graph
 from services.ai import AiCache
 from services.answering import run_task
+from services.cardinfo import CardInfoService
+from services.images import ImageCache
 from services.market import MarketService
 from services.prefetch import Prefetcher
+from services.stats import StatsCrawler
+from services.teamcolor import TeamColorService
 from vector_store import PlayerStore
 
 log = logging.getLogger("fclab")
 
 NAV = [("home", "🏠 홈"), ("players", "👤 선수"), ("ranking", "🏆 파워 랭킹"), ("compare", "⚖️ 비교"),
-       ("tactics", "🧠 전술 추천"), ("favorites", "⭐ 즐겨찾기"), ("me", "🎮 내 기록")]
+       ("tactics", "🧠 스쿼드 · 전술"), ("grow", "⚒️ 강화 시뮬"), ("favorites", "⭐ 즐겨찾기"), ("me", "🎮 내 기록")]
 NAV_OF = {"player": "players"}   # 선수 상세는 '선수' 메뉴 아래
+PAGE_NAMES = {key for key, _ in NAV} | set(NAV_OF)
 
 
 @dataclass
@@ -58,6 +65,10 @@ class Ctx:
     theme: str
     curated_ids: set
     market: MarketService        # 강화 단계별 시세 (데이터센터) — 백그라운드에서 받아 SQLite 에
+    cards: CardInfoService       # 카드 상세 (데이터센터) — 특성 · 능력치 · 클럽 경력 · 팀컬러 · 포지션별 OVR
+    datacenter: DatacenterClient | None   # 데이터센터 창구 (AI 추천 스쿼드 · 강화 부스트), 시세를 끄면 None
+    teamcolors: TeamColorService  # 팀컬러 목록 · 단계별 효과 (데이터센터) — SQLite 에, 새 팀컬러는 더한다
+    stats: StatsCrawler          # 모든 카드의 능력치 · 급여 · OVR (데이터센터 선수 검색) — 뒤에서 모은다
 
 
 def friendly_error(exc: Exception) -> str:
@@ -85,15 +96,25 @@ def _settings():
     return config.load_settings()
 
 
-@st.cache_data
+@st.cache_resource
 def _curated(path: str) -> list[dict]:
+    """미리 분석한 카드 — 화면마다 복사본을 풀지 않도록 같은 목록을 나눠 쓴다 (선수 dict 를 고쳐 쓰는 곳은 없다)."""
     return load_players(path)
 
 
 @st.cache_resource
-def _catalog(_settings) -> tuple[NexonClient, CardCatalog]:
+def _database(_settings) -> FcDb:
+    """SQLite (앱 프로세스에 하나) — 연결 하나를 열어 두고 스레드끼리 차례로 쓴다."""
+    return FcDb(_settings.storage_dir / "fclab.db")
+
+
+@st.cache_resource
+def _catalog(_settings, _db) -> tuple[NexonClient, CardCatalog]:
+    """전체 카드 목록 — DB 에 둔 목록을 바로 쓰고, 하루 지났으면 뒤에서 새로 받아 새 카드를 더한다."""
     nexon = NexonClient(config.nexon_key())
-    return nexon, CardCatalog(nexon, _settings.storage_dir / "meta")
+    catalog = CardCatalog(nexon, _settings.storage_dir / "meta", _db)
+    catalog.refresh_in_background()
+    return nexon, catalog
 
 
 @st.cache_resource
@@ -106,27 +127,86 @@ def _services(_settings):
 
 
 @st.cache_resource
-def _background(_settings, _catalog, _wiki, _curated) -> tuple[FcDb, Prefetcher]:
-    """SQLite + 백그라운드 미리 불러오기 (앱 프로세스에 하나). 시작하자마자 미리 분석한 카드의 포지션 기록을 채운다."""
-    db = FcDb(_settings.storage_dir / "fclab.db")
+def _background(_settings, _db, _catalog, _wiki, _curated) -> Prefetcher:
+    """백그라운드 미리 불러오기 (앱 프로세스에 하나)."""
     hints = {}
     for p in _curated:
         if p.get("wiki_title"):
             hints.setdefault(p["pid"], p)
     # 앱 시작 때 432장을 미리 받던 것은 뺐다 — 넥슨 테스트 키는 하루 1,000회라 시작할 때마다 약 300회를 쓰면 금방 바닥난다.
     # 미리 분석한 카드의 포지션별 기록은 build_items.py 가 players.json 에 함께 넣는다 (ranker_positions).
-    return db, Prefetcher(_catalog, _wiki, db, _settings.matchtype, hints)
+    return Prefetcher(_catalog, _wiki, _db, _settings.matchtype, hints)
 
 
 @st.cache_resource
-def _market(_settings, _db) -> MarketService:
+def _images(_db) -> ImageCache:
+    """선수 · 시즌 이미지 사본 (앱 프로세스에 하나) — static/cache 에 받아 두고 앱이 직접 내준다."""
+    return ImageCache(_db, config.BASE_DIR / "static" / "cache")
+
+
+@st.cache_resource
+def _datacenter(_settings) -> DatacenterClient | None:
+    """데이터센터 요청 창구 (앱 프로세스에 하나) — 시세 · 카드 상세 · 강화 부스트가 같은 요청 간격을 나눠 쓴다."""
+    return DatacenterClient(_settings.market_interval) if _settings.market_enabled else None
+
+
+@st.cache_resource
+def _cards(_settings, _db) -> CardInfoService:
+    """카드 상세 수집기 (앱 프로세스에 하나) — 특성 · 능력치 · 급여를 데이터센터에서 받아 SQLite 에 둔다."""
+    return CardInfoService(_datacenter(_settings), _db, _settings.market_enabled)
+
+
+@st.cache_resource
+def _market(_settings, _db, _catalog) -> MarketService:
     """시세 수집기 (앱 프로세스에 하나). 켜질 때 한 번 — 꺼져 있던 동안 밀린 시세를 뒤쪽 우선순위로 따라잡는다."""
-    client = MarketClient(_settings.market_interval) if _settings.market_enabled else None
-    market = MarketService(client, _db, _settings.market_ttl_hours, _settings.market_enabled)
+    def name_of(spid: int) -> str | None:
+        return (_catalog.by_spid.get(spid) or {}).get("name", "").strip() or None
+
+    market = MarketService(_datacenter(_settings), _db, _settings.market_ttl_hours, _settings.market_enabled,
+                           name_of=name_of, current_ttl_minutes=_settings.market_current_ttl_minutes,
+                           refresh_minutes=_settings.market_refresh_minutes)
     queued = market.catch_up(_settings.market_catch_up)
     if queued:
         log.info("시세 따라잡기 %d건 예약 (앱이 꺼져 있던 동안)", queued)
     return market
+
+
+@st.cache_resource
+def _teamcolors(_settings, _db) -> TeamColorService:
+    """팀컬러 (앱 프로세스에 하나) — 목록은 하루마다 새로 받아 새 팀컬러를 더하고, 단계별 효과는 쓸 때 받아 둔다."""
+    client = _datacenter(_settings)
+
+    def clubs() -> set[str]:   # 선수 검색의 클럽 이름 (일주일 둔다) — 4xxxx 번호 중 클럽을 가려낸다
+        data = _db.dc_get("teams", 24 * 7)
+        if data is None and client is not None:
+            data = client.teams()
+            _db.dc_put("teams", data)
+        return set((data or {}).get("teams", {}))
+
+    return TeamColorService(client, _db, _settings.market_enabled, clubs=clubs)
+
+
+@st.cache_resource
+def _stats(_settings, _db) -> StatsCrawler:
+    """모든 카드의 능력치 · 급여 수집 (앱 프로세스에 하나) — 켜질 때 시작해 뒤에서 이어서 모은다."""
+    crawler = StatsCrawler(_datacenter(_settings), _db, _settings.market_enabled and _settings.stats_enabled,
+                           _settings.stats_interval, _settings.stats_refresh_days)
+    crawler.start()
+    return crawler
+
+
+_index_ready = False
+
+
+def _theme() -> str:
+    """화면 테마 (dark · light). 세션의 첫 실행에는 브라우저가 아직 테마를 알려 주지 않아 'light' 로 와서, 그대로 쓰면
+    처음 들어왔을 때만 버튼이 흰 면으로 그려졌다 — 첫 실행은 설정 파일(.streamlit/config.toml)의 테마를 따른다."""
+    configured = st.get_option("theme.base")
+    reported = st.context.theme.type if hasattr(st, "context") else None
+    if not st.session_state.get("_theme_known"):
+        st.session_state._theme_known = True
+        return configured or reported or "dark"
+    return reported or configured or "dark"
 
 
 def _stop(kind: str, message: str) -> None:
@@ -147,62 +227,221 @@ def boot() -> Ctx:
         _stop("error", "GMS_KEY가 설정되지 않았습니다. `.env`에 `GMS_KEY=발급받은_키`를 넣고 앱을 다시 실행하세요.")
     try:
         model, store, collector, graph = _services(settings)
-        nexon, catalog = _catalog(settings)
+        db = _database(settings)
+        nexon, catalog = _catalog(settings, db)
     except Exception as exc:  # noqa: BLE001 — 화면에는 안내만, 상세는 로그로
         log.exception("서비스 준비 실패")
         _stop("error", friendly_error(exc))
-    if store.meta_count() == 0:
-        _stop("warning", "선수 메타데이터 색인이 비어 있습니다. 터미널에서 `python build_index.py`를 실행한 뒤 새로고침하세요.")
+    global _index_ready
+    if not _index_ready:   # 비어 있지 않은 것을 한 번 확인하면 그다음부터는 묻지 않는다 (매 화면 Chroma 조회를 줄인다)
+        if store.meta_count() == 0:
+            _stop("warning", "선수 메타데이터 색인이 비어 있습니다. 터미널에서 `python build_index.py`를 실행한 뒤 새로고침하세요.")
+        _index_ready = True
 
     curated = _curated(str(settings.items_path))
     curated_ids = {p["player_id"] for p in curated}
-    db, prefetcher = _background(settings, catalog, collector.wiki, curated)
+    prefetcher = _background(settings, db, catalog, collector.wiki, curated)
+    ui_parts.use_image_cache(_images(db).resolve)   # 매번 — ui_parts 가 다시 읽혀도(코드 수정) 끼워져 있게
+    ui_parts.use_card_frames(_images(db).frame)
+    st.session_state._tile_wait = set()   # 이번 화면의 타일 중 카드 상세를 기다리는 카드 (tile_watch)
     # 미리 분석한 카드 + 앱에서 열어 분석한 카드(SQLite)
     players = curated + [p for p in db.all_players() if p["player_id"] not in curated_ids]
     by_pid = {}
     for p in players:
         if p.get("wiki_title"):
             by_pid.setdefault(p["pid"], p)
-    theme = (st.context.theme.type or "dark") if hasattr(st, "context") else "dark"
+    theme = _theme()
     for key, default in (("page", "home"), ("player_id", None), ("chats", {}), ("results", {}),
                          ("explore_results", None), ("pending_question", None), ("cmp_a", None), ("cmp_b", None),
                          ("me_result", None)):
         if key not in st.session_state:
             st.session_state[key] = default
     return Ctx(settings, players, {p["player_id"]: p for p in players}, by_pid, catalog, nexon, model, store,
-               collector, graph, AiCache(db), db, prefetcher, Favorites(db), theme, curated_ids, _market(settings, db))
+               collector, graph, AiCache(db), db, prefetcher, Favorites(db), theme, curated_ids,
+               _market(settings, db, catalog), _cards(settings, db), _datacenter(settings), _teamcolors(settings, db),
+               _stats(settings, db))
 
 
-# ── 이동 ────────────────────────────────────────────────────────
+# ── 이동 · 브라우저 뒤로가기 ─────────────────────────────────────────
+# 화면을 옮길 때마다 브라우저 방문 기록에도 한 칸(#home · #player/866200104 …)을 넣는다. 그래서 브라우저의 ← · → 도
+# 이 앱의 직전 화면으로 간다 (다른 사이트로 나가지 않는다). 칸마다 그 화면의 입력(검색어 · 필터 · AI 결과)을 남겨,
+# 뒤로 돌아오면 떠날 때 그대로 보인다. 🏠 · 로고만 새 칸으로 처음 상태의 홈을 연다.
+#   nav_log: [{page, player_id, inputs}] — 브라우저 기록과 같은 순서, nav_pos: 지금 칸
+#   nav_op: 브라우저 기록에 할 일 (push · back · replace) — nav_bridge(브라우저 쪽 JS)가 한 번씩만 한다
 
-def _remember() -> None:
-    """지금 화면을 이동 기록에 쌓는다 — ← 뒤로 버튼이 꺼내 쓴다."""
-    here = (st.session_state.page, st.session_state.player_id)
-    history = st.session_state.setdefault("history", [])
-    if not history or history[-1] != here:
-        history.append(here)
-        del history[:-30]
+KEEP_INPUTS = {   # 다른 화면에 다녀와도 그대로 둘 입력 (Streamlit 은 화면에 없는 입력칸의 값을 지운다)
+    "home": ("q", "q_season", "explore_results", "chips"),
+    "players": ("pl_q", "pl_season", "pl_kind", "pl_sort", "pl_group", "pl_page", "pl_view"),
+    "ranking": ("rank_group", "rank_kind", "rank_sort", "rank_min", "rank_page"),
+}
+FRESH_HOME = {"q": "", "q_season": None, "explore_results": None}
+NAV_JS = """
+export default function(component) {
+  const { data, setTriggerValue } = component;
+  const nav = window.__fclabNav || (window.__fclabNav = { ignore: 0 });
+  nav.trigger = setTriggerValue;
+  if (!nav.listening) {   // 브라우저 ← · → — 그 칸의 번호와 주소를 앱에 알린다
+    nav.listening = true;
+    window.addEventListener("popstate", (event) => {
+      if (nav.ignore > 0) { nav.ignore -= 1; return; }   // 앱의 '← 뒤로'가 부른 history.back()
+      const state = event.state || {};
+      if (state.fclab !== undefined)
+        nav.trigger("moved", { seq: state.fclab, sid: state.sid, route: location.hash.slice(1), at: Date.now() });
+    });
+  }
+  const op = data.sid + ":" + data.op_id;
+  if (nav.done === op) return;   // 화면이 다시 그려질 때마다 불린다 — 같은 지시는 한 번만
+  if (nav.sid !== data.sid) {   // 새 세션 (처음 열기 · 새로 고침 · 서버를 다시 켠 뒤) — 주소의 화면(#player/…)을 다시 연다
+    nav.sid = data.sid;
+    const route = location.hash.slice(1);
+    if (data.seq === 0 && route && route !== data.label) {
+      nav.done = op;
+      setTriggerValue("opened", { route, at: Date.now() });
+      return;
+    }
+  }
+  nav.done = op;
+  const state = { fclab: data.seq, sid: data.sid }, url = location.pathname + location.search + "#" + data.label;
+  if (data.op === "push") history.pushState(state, "", url);
+  else if (data.op === "back") { nav.ignore += 1; history.back(); }
+  else history.replaceState(state, "", url);
+}
+"""
+_components: dict[tuple[int, str], object] = {}
+
+
+def browser_component(name: str, **parts):
+    """브라우저 쪽 부품(st.components.v2)을 런타임마다 한 번 등록해 돌려준다 — 런타임마다 등록부가 따로라서.
+    브라우저 없이 도는 점검(AppTest)에서는 None (부품 없이 그린다)."""
+    from streamlit.runtime import Runtime
+
+    if not Runtime.exists():
+        return None
+    registry = Runtime.instance().bidi_component_registry
+    key = (id(registry), name, hash(tuple(sorted(parts.items()))))   # CSS · JS 를 고치면 새로 등록 (같은 이름은 덮어쓴다)
+    if key not in _components:
+        _components[key] = st.components.v2.component(name, **parts)
+    return _components[key]
+
+
+def _entry(page: str, player_id: str | None = None) -> dict:
+    return {"page": page, "player_id": str(player_id) if page == "player" and player_id else None, "inputs": {}}
+
+
+def _route(entry: dict) -> str:
+    return f"player/{entry['player_id']}" if entry["page"] == "player" else entry["page"]
+
+
+def _nav_op(op: str) -> None:
+    st.session_state.nav_op = op
+    st.session_state.nav_op_id = st.session_state.get("nav_op_id", 0) + 1
+
+
+def _leave() -> None:
+    """떠나는 화면의 입력을 지금 칸에 적어 둔다 — 뒤로 돌아오면 그대로 되살린다."""
+    entry = st.session_state.nav_log[st.session_state.nav_pos]
+    entry["inputs"] = {k: st.session_state[k] for k in KEEP_INPUTS.get(entry["page"], ()) if k in st.session_state}
+
+
+def _arrive(entry: dict) -> None:
+    st.session_state.page = entry["page"]
+    st.session_state.ai_dialog = st.session_state.cmp_dialog = None
+    if entry["player_id"]:
+        st.session_state.player_id = entry["player_id"]
+    for key in KEEP_INPUTS.get(entry["page"], ()):
+        if key in entry["inputs"]:
+            st.session_state[key] = entry["inputs"][key]
+
+
+def _push(entry: dict, inputs: dict | None = None) -> None:
+    """새 화면 — 지금 칸 뒤(앞으로 가기 기록)는 버리고 새 칸을 붙인다. 브라우저 기록도 같이."""
+    here = st.session_state.nav_log[st.session_state.nav_pos]
+    if (here["page"], here["player_id"]) == (entry["page"], entry["player_id"]):
+        return
+    _leave()
+    entry["inputs"] = dict(inputs or {})
+    del st.session_state.nav_log[st.session_state.nav_pos + 1 :]
+    st.session_state.nav_log.append(entry)
+    st.session_state.nav_pos = len(st.session_state.nav_log) - 1
+    for key, value in (inputs or {}).items():
+        st.session_state[key] = value
+    _arrive(entry)
+    _nav_op("push")
 
 
 def go(page: str) -> None:
-    if page != st.session_state.page:
-        _remember()
-    st.session_state.page = page
+    _push(_entry(page, st.session_state.player_id))
+
+
+def go_home() -> None:
+    """🏠 · 로고 — 검색어 · 시즌 · AI 결과를 지운 처음 홈 (추천 검색어도 새로). 다른 화면에서 오면 새 칸으로 열어,
+    뒤로 가면 전의 홈이 그대로 있다. 이미 홈이면 그 자리에서 처음 상태로."""
+    st.session_state.pop("chips", None)
+    if st.session_state.nav_log[st.session_state.nav_pos]["page"] == "home":
+        st.session_state.update(FRESH_HOME)
+        return
+    _push(_entry("home"), FRESH_HOME)
 
 
 def go_back() -> None:
-    history = st.session_state.get("history") or []
-    if history:
-        st.session_state.page, st.session_state.player_id = history.pop()
-    else:
-        st.session_state.page = "home"
+    if st.session_state.nav_pos == 0:
+        return
+    _leave()
+    st.session_state.nav_pos -= 1
+    _arrive(st.session_state.nav_log[st.session_state.nav_pos])
+    _nav_op("back")
 
 
 def open_player(player_id: str) -> None:
-    if (st.session_state.page, st.session_state.player_id) != ("player", str(player_id)):
-        _remember()
-    st.session_state.player_id = str(player_id)
-    st.session_state.page = "player"
+    _push(_entry("player", player_id))
+
+
+def _route_entry(route: str) -> dict | None:
+    page, _, player_id = route.partition("/")
+    if page in PAGE_NAMES and (page != "player" or player_id.isdigit()):
+        return _entry(page, player_id)
+    return None
+
+
+def _on_browser_move() -> None:
+    """브라우저 ← · → — 이 세션이 만든 칸이면 그 칸으로(입력까지 그대로), 전 세션의 칸이면 그 주소의 화면을 지금 칸에."""
+    moved = (st.session_state.get("nav_bridge") or {}).get("moved") or {}
+    seq = moved.get("seq")
+    _leave()
+    if moved.get("sid") == st.session_state.nav_sid and isinstance(seq, int) and 0 <= seq < len(st.session_state.nav_log):
+        st.session_state.nav_pos = seq
+        _arrive(st.session_state.nav_log[seq])
+    elif entry := _route_entry(moved.get("route", "")):
+        st.session_state.nav_log[st.session_state.nav_pos] = entry
+        _arrive(entry)
+        _nav_op("replace")
+
+
+def _on_reopen() -> None:
+    """새로 고침 — 주소에 있던 화면(#player/866200104 · #ranking …)을 첫 칸으로 다시 연다."""
+    entry = _route_entry(((st.session_state.get("nav_bridge") or {}).get("opened") or {}).get("route", ""))
+    if entry:
+        st.session_state.nav_log[0] = entry
+        _arrive(entry)
+    _nav_op("replace")
+
+
+def nav_bridge() -> None:
+    """브라우저 방문 기록과 앱의 이동 기록을 맞춘다 — 화면 맨 위에서 한 번 부른다."""
+    if "nav_log" not in st.session_state:
+        st.session_state.nav_log = [_entry(st.session_state.page, st.session_state.player_id)]
+        st.session_state.nav_pos = 0
+        st.session_state.nav_sid = uuid.uuid4().hex[:8]
+        _nav_op("replace")
+    bridge = browser_component("fclab_nav", js=NAV_JS)
+    if bridge is None:   # 브라우저 없이 도는 점검 — 앱 안 이동 기록만
+        return
+    here = st.session_state.nav_log[st.session_state.nav_pos]
+    with st.container(key="nav_bridge_box"):
+        bridge(key="nav_bridge", data={"seq": st.session_state.nav_pos, "label": _route(here),
+                                       "op": st.session_state.nav_op, "op_id": st.session_state.nav_op_id,
+                                       "sid": st.session_state.nav_sid},
+               on_moved_change=_on_browser_move, on_opened_change=_on_reopen, height=0)
 
 
 def add_to_compare(player_id: str, other_id: str | None = None) -> None:
@@ -217,20 +456,23 @@ def add_to_compare(player_id: str, other_id: str | None = None) -> None:
 
 
 def back_button(where: str, container=None) -> None:
-    """← 뒤로 — 검색창 옆 · 상세 화면 맨 위에 둔다 (상단 메뉴가 아니라 지금 보고 있는 곳 가까이)."""
+    """← 뒤로 — 검색창 옆 · 상세 화면 맨 위에 둔다 (상단 메뉴가 아니라 지금 보고 있는 곳 가까이). 브라우저 ← 와 같다."""
     (container or st).button("← 뒤로", key=f"back_{where}", on_click=go_back, width="stretch",
-                             disabled=not st.session_state.get("history"), help="이전 화면으로")
+                             disabled=not st.session_state.get("nav_pos"), help="이전 화면으로")
 
 
 def top_bar() -> None:
-    """로고(누르면 홈) · 메뉴. 넓은 화면은 한 줄, 좁은 화면에서만 다음 줄로 (ui_parts.css 의 .st-key-navbar)."""
+    """로고(누르면 처음 홈) · 메뉴. 넓은 화면은 한 줄, 좁은 화면에서만 다음 줄로 (ui_parts.css 의 .st-key-navbar)."""
+    nav_bridge()
     with st.container(key="navbar"):
         brand, *cols = st.columns([1.8] + [1.2] * len(NAV), vertical_alignment="center")
-        brand.button("⚽ FC LAB", key="nav_brand", on_click=go, args=("home",), type="tertiary", width="stretch")
+        with brand.container(key="nav_brand_box"):   # 로고는 글자 그대로 — 위에 투명 버튼을 겹쳐 누르면 처음 홈
+            st.markdown('<div class="fc-logo">⚽ FC LAB</div>', unsafe_allow_html=True)
+            st.button("FC LAB 홈으로", key="nav_brand", on_click=go_home, width="stretch")
         active = NAV_OF.get(st.session_state.page, st.session_state.page)
         for col, (key, label) in zip(cols, NAV):
-            col.button(label, key=f"nav_{key}", on_click=go, args=(key,), width="stretch",
-                       type="primary" if active == key else "tertiary")
+            col.button(label, key=f"nav_{key}", on_click=go_home if key == "home" else go, args=() if key == "home" else (key,),
+                       width="stretch", type="primary" if active == key else "tertiary")
 
 
 # ── 선수 찾기 · 열기 ─────────────────────────────────────────────
@@ -239,10 +481,36 @@ def _norm(text: str) -> str:
     return re.sub(r"[\W_]+", "", text.lower())
 
 
-def search_players(ctx: Ctx, query: str, season_id: int | None = None, limit: int = 24) -> list[dict]:
-    """이름 검색 + 시즌(클래스) 거르기 — 분석해 둔 카드 먼저, 그다음 전체 88,359장. 네트워크 없이 끝난다.
+SEARCH_CAP = 1500   # 이름 · 시즌 검색에서 OVR 로 줄 세울 최대 장수
 
-    이름 없이 시즌만 고르면 그 시즌 카드를 둘러본다.
+
+def card_ovrs(ctx: Ctx, spids: list[int]) -> dict[int, int]:
+    """카드마다 +1 OVR — 받아 둔 카드 상세 · 모은 능력치(선수 검색)에서. 모르는 카드는 빠진다."""
+    out = {s: i["ovr"] for s, i in ctx.cards.get(spids).items() if i.get("ovr")}
+    out.update({s: r["ovr"] for s, r in ctx.db.card_stats([s for s in spids if s not in out]).items() if r.get("ovr")})
+    return out
+
+
+def _learn_ovrs(ctx: Ctx, query: str) -> None:
+    """이름으로 데이터센터 선수 검색 한 번 — 그 이름이 들어간 선수 카드 전부의 OVR · 급여 · 주발 · 시세를 DB 에 (하루에 한 번)."""
+    key = f"name_search:{_norm(query)}"
+    if ctx.datacenter is None or ctx.db.dc_get(key, 24) is not None:
+        return
+    try:
+        with st.spinner("선수 OVR 을 데이터센터에서 받는 중… (이 이름은 처음 한 번만)"):
+            rows = ctx.datacenter.player_list(query.strip())
+    except Exception as exc:  # noqa: BLE001 — 못 받아도 검색은 된다 (OVR 을 모르는 카드는 뒤로)
+        log.warning("이름 검색 OVR 받기 실패: %s", exc)
+        return
+    ctx.db.put_listing(rows)   # 현재가 · 급여 · OVR · 포지션 · 주발 (card_list · market · card_stats)
+    ctx.db.dc_put(key, len(rows))
+
+
+def search_players(ctx: Ctx, query: str, season_id: int | None = None, limit: int = 24) -> list[dict]:
+    """이름 검색 + 시즌(클래스) 거르기 — 분석해 둔 카드와 전체 88,359장에서 찾아 OVR 높은 순으로.
+
+    OVR 을 모르는 카드는 최신 시즌 순으로 뒤에 둔다. 이름으로 찾았는데 모르는 카드가 있으면 데이터센터 선수 검색 한 번으로
+    그 이름의 카드 OVR 을 받아 DB 에 둔다 — 다음부터는 바로 정렬된다. 이름 없이 시즌만 고르면 그 시즌 카드를 둘러본다.
     """
     q = _norm(query)
     if not q and season_id is None:
@@ -251,21 +519,18 @@ def search_players(ctx: Ctx, query: str, season_id: int | None = None, limit: in
     def keep(spid: int) -> bool:
         return season_id is None or split_spid(spid)[0] == season_id
 
-    found = [p for p in ctx.players if (not q or q in _norm(p["name"])) and keep(p["spid"])]
-    found.sort(key=lambda p: (bool(q) and _norm(p["name"]) != q, -p["season_id"],
-                              -((p.get("ranker") or {}).get("goal", 0) + (p.get("ranker") or {}).get("assist", 0))))
-    seen = {p["player_id"] for p in found}
+    analyzed = {p["player_id"]: p for p in ctx.players if (not q or q in _norm(p["name"])) and keep(p["spid"])}
     if q:
         hits = [h["spid"] for h in ctx.catalog.search(query, limit=2000)]
     else:
         hits = [c["id"] for c in ctx.catalog.cards if split_spid(c["id"])[0] == season_id]
-    for spid in hits:
-        if len(found) >= limit:
-            break
-        if keep(spid) and str(spid) not in seen:
-            found.append(ctx.catalog.basic_player(spid))
-            seen.add(str(spid))
-    return found[:limit]
+    spids = list(dict.fromkeys([p["spid"] for p in analyzed.values()] + [s for s in hits if keep(s)]))[:SEARCH_CAP]
+    ovrs = card_ovrs(ctx, spids)
+    if q and len(q) >= 2 and any(s not in ovrs for s in spids[:200]):
+        _learn_ovrs(ctx, query)
+        ovrs = card_ovrs(ctx, spids)
+    spids.sort(key=lambda s: (s not in ovrs, -ovrs.get(s, 0), -split_spid(s)[0]))
+    return [analyzed.get(str(s)) or ctx.catalog.basic_player(s) for s in spids[:limit]]
 
 
 class Favorites:
@@ -332,29 +597,106 @@ def with_saves(ctx: Ctx, players: list[dict]) -> list[dict]:
             for p in players]
 
 
-def has_save_samples(ctx: Ctx) -> bool:
-    """선방률을 보여 줄 만큼 표본이 모인 골키퍼 카드가 하나라도 있나 — 없으면 골키퍼 정렬 기본값을 랭커 경기 수로."""
-    return any(s["on_target"] >= SAVE_MIN_SHOTS for s in ctx.db.gk_saves().values())
-
-
 def tile_grid(ctx: Ctx, players: list[dict], key: str, cols: int = 6, ranked: bool = False,
               kpi=None, reasons: dict[str, str] | None = None, badges: dict[str, str] | None = None) -> None:
     """카드 타일 묶음 — 카드 전체가 버튼이다 (ui_parts.css 의 .st-key-tile_* : 타일 위에 투명 버튼을 겹친다).
 
     badges(랭킹 순위) · reasons(AI 추천 이유)는 카드 안에 넣는다 — 카드 밖에 따로 두면 겹치거나 줄이 어긋난다.
     """
-    import ui_parts   # 순환 import 를 피하려고 여기서
-
     players = with_saves(ctx, players)
+    spids = [p["spid"] for p in players]
+    known = card_basics(ctx, spids)
+    missing = [s for s in spids if not known.get(s, {}).get("info")]
+    if missing:   # 급여 · 주발 · OVR 이 없는 카드는 뒤에서 받고, 다 받으면 tile_watch 가 화면을 다시 그린다
+        ctx.cards.want(missing)
+        st.session_state.setdefault("_tile_wait", set()).update(missing)
     with st.container(key=f"grid_{key}"):   # 좁은 화면에서 줄바꿈 (ui_parts.css 의 st-key-grid_*)
         for start in range(0, len(players), cols):
             for offset, (col, p) in enumerate(zip(st.columns(cols), players[start : start + cols])):
+                card = known.get(p["spid"], {})
                 with col, st.container(key=f"tile_{key}_{p['player_id']}"):
                     st.markdown(ui_parts.tile(p, rank=start + offset + 1 if ranked else None, kpi=kpi(p) if kpi else None,
                                               badge=(badges or {}).get(p["player_id"], ""),
-                                              note=(reasons or {}).get(p["player_id"], "")), unsafe_allow_html=True)
+                                              note=(reasons or {}).get(p["player_id"], ""), ovr=card.get("ovr"),
+                                              position=card.get("position"), pay=card.get("pay"), foot=card.get("foot")),
+                                unsafe_allow_html=True)
                     st.button(f"{p['name']} · {p['season_short']} 보기", key=f"{key}_{p['player_id']}",
                               on_click=open_player, args=(p["player_id"],), width="stretch")
+
+
+def card_basics(ctx: Ctx, spids: list[int]) -> dict[int, dict]:
+    """카드마다 {ovr(+1), position(주 포지션), pay, foot, info(카드 상세가 있나)} — 받아 둔 카드 상세 → 모은 능력치
+    (선수 검색) 순으로. 급여는 선수 검색 값이 더 자주 새로 오니 그것을 먼저. 둘 다 없으면 빠진다."""
+    infos = ctx.cards.get(spids)
+    stats = ctx.db.card_stats(spids)
+    out = {}
+    for spid in spids:
+        info, row = infos.get(spid) or {}, stats.get(spid) or {}
+        if not info and not row.get("ovr"):
+            continue
+        positions = row.get("positions") or []
+        out[spid] = {"ovr": info.get("ovr") or row.get("ovr"),
+                     "position": info.get("position") or (positions[0][0] if positions else None),
+                     "pay": row.get("pay") if row.get("pay") is not None else info.get("pay"),
+                     "foot": info.get("foot_lr") or row.get("foot"), "info": bool(info)}
+    return out
+
+
+def dialog_open() -> bool:
+    """모달(AI 추천 스쿼드 · 바로 비교)이 열려 있나 — 열려 있는 동안에는 받는 중 감시가 화면을 다시 그리지 않는다."""
+    return bool(st.session_state.get("ai_dialog") or st.session_state.get("cmp_dialog"))
+
+
+def tile_watch(ctx: Ctx) -> None:
+    """이번 화면의 타일 중 카드 상세(급여 · 주발 · OVR)를 받는 카드가 있으면, 다 받았을 때 한 번 다시 그린다."""
+    waiting = list(st.session_state.get("_tile_wait") or ())
+    if waiting and ctx.cards.pending(waiting):
+        _tile_watch_live(ctx, waiting)
+
+
+@st.fragment(run_every=3)
+def _tile_watch_live(ctx: Ctx, waiting: list[int]) -> None:
+    if not ctx.cards.pending(waiting) and not dialog_open():
+        st.rerun()
+
+
+def crests_of(ctx: Ctx, info: dict | None) -> list[tuple[str, str]]:
+    """국기 + 이 카드가 드는 소속 팀컬러 엠블럼 [(이름, 이미지 주소)] — 국가 팀컬러는 국기로 대신한다."""
+    if not info:
+        return []
+    icons = st.session_state.get("_tc_icons")
+    if icons is None:   # 화면마다 800개를 다시 풀지 않게 세션에 한 번
+        icons = {tc["id"]: (tc.get("icon", ""), tc.get("kind", "")) for tc in ctx.teamcolors.all()}
+        if icons:
+            st.session_state._tc_icons = icons
+    out = [(info.get("nation", ""), info["nation_flag"])] if info.get("nation_flag") else []
+    for t in (info.get("teamcolors") or {}).get("소속", []):
+        icon, kind = icons.get(t["id"], ("", ""))
+        if icon and kind != "국가":
+            out.append((t["name"], icon))
+    return out
+
+
+def card_row_list(ctx: Ctx, players: list[dict], key: str, notes: dict[str, str] | None = None) -> int:
+    """선수 줄 목록 (공식 스쿼드 메이커의 선수 목록처럼) — 줄 전체가 버튼(상세 페이지). 카드 상세가 없는 카드는 받기 시작하고
+    아직 받는 중인 장수를 돌려준다 (부르는 쪽이 조각을 다시 그린다)."""
+    spids = [p["spid"] for p in players]
+    ctx.cards.want(spids)
+    infos = ctx.cards.get(spids)
+    stats = ctx.db.card_stats([s for s in spids if s not in infos])
+    for p in players:
+        info, known = infos.get(p["spid"]), stats.get(p["spid"]) or {}
+        positions = known.get("positions") or []
+        ovr = (info or {}).get("ovr") or known.get("ovr")
+        position = (info or {}).get("position") or (positions[0][0] if positions else None)
+        with st.container(key=f"prow_{key}_{p['player_id']}"):
+            st.markdown(ui_parts.card_row(p, info, ovr=ovr, position=position, pay=(info or {}).get("pay", known.get("pay")),
+                                          foot=(info or {}).get("foot_lr") or known.get("foot"), crests=crests_of(ctx, info),
+                                          note=(notes or {}).get(p["player_id"], "")), unsafe_allow_html=True)
+            if st.button(f"{p['name']} · {p['season_short']} 보기", key=f"{key}_{p['player_id']}", width="stretch"):
+                open_player(p["player_id"])   # 조각(fragment) 안에서도 화면이 바뀌게 — 콜백 대신 눌린 뒤 앱 전체를 다시
+                st.rerun()
+    return ctx.cards.pending(spids)
 
 
 # ── 근거 표시 (F2008) · 진행 상태 (F2012) ───────────────────────────

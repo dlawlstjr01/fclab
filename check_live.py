@@ -103,7 +103,7 @@ def main() -> None:
 
     print("⑪ 조건 기반 탐색 — 조건과 맞지 않는 선수가 섞이지 않아야 한다 (F2011)")
     by_id = {p["player_id"]: p for p in players}
-    found = explore_players("대한민국 출신 선수", store, model, by_id, settings)
+    found = explore_players("대한민국 출신 선수", store, model, by_id, settings)["items"]
     wrong = [by_id[f["player_id"]]["name"] for f in found if "대한민국" not in (by_id[f["player_id"]].get("intro") or "")]
     print("     " + ", ".join(by_id[f["player_id"]]["name"] for f in found))
     line(bool(found) and not wrong, f"결과 {len(found)}명, 소개에 '대한민국'이 없는 선수 {wrong or '없음'}")

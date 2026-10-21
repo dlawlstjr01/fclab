@@ -54,7 +54,7 @@ class FakeChat:
     def __init__(self):
         self.calls: list[str] = []
 
-    def invoke(self, messages):
+    def invoke(self, messages, **_options):
         # 프롬프트마다 다른 문구로 알아본다 (앞부분은 역할 설명이 같아서 겹친다)
         system = messages[0]["content"]
         if "검색어를 뽑는다" in system:
@@ -72,9 +72,11 @@ class FakeChat:
         if "FC 온라인 코치" in system:
             self.calls.append("coach")
             return SimpleNamespace(content="### 한 줄 진단\n테스트 진단 [근거 1].")
-        if "조건에 맞는 선수 카드를" in system:
+        if "선수 카드가 맞는지" in system:
             self.calls.append("explore")
-            return SimpleNamespace(content='[{"no": 2, "reason": "조건과 맞는 이유"}, {"no": 99, "reason": "없는 번호"}]')
+            return SimpleNamespace(content='[{"no": 2, "match": true, "reason": "조건과 맞는 이유"}, '
+                                           '{"no": 1, "match": false, "reason": "국적이 다름"}, '
+                                           '{"no": 99, "match": true, "reason": "없는 번호"}]')
         self.calls.append("answer")
         return SimpleNamespace(content="데뷔 기록은 다음과 같습니다 [근거 1]. 클럽 경력 [근거 2, 99].")
 
@@ -112,9 +114,10 @@ if not real.items_path.exists():
 all_players = load_players(real.items_path)
 with_wiki = [p for p in all_players if p.get("wiki_title") and p.get("ranker")]
 sample = with_wiki[:20]
-keeper = next(p for p in with_wiki if p.get("position_group") == "골키퍼")   # 골키퍼 선방률 화면 점검용
-if keeper not in sample:
-    sample.append(keeper)
+# 골키퍼 선방률 화면 점검용 — 선방 기록을 넣을 1명(keeper) + 기록이 없는 1명 (순위에 둘 다 보여야 한다)
+keepers = [p for p in with_wiki if p.get("position_group") == "골키퍼"][:2]
+keeper = keepers[0]
+sample += [k for k in keepers if k not in sample]
 tmp = Path(tempfile.mkdtemp(prefix="fclab_check_"))
 (tmp / "data").mkdir()
 (tmp / "data" / "players.json").write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
@@ -212,7 +215,10 @@ check({e["player_id"] for e in both["evidence"] if e["source_type"] == "player_m
 print("\nF2011  조건 기반 탐색")
 by_id = {p["player_id"]: p for p in sample}
 found = explore_players("대한민국 출신 공격수", store, chat, by_id, settings)
-check(len(found) == 1 and found[0]["player_id"] in by_id, f"LLM 이 고른 번호만, 없는 번호(99)는 버린다: {found}")
+check(len(found["items"]) == 1 and found["items"][0]["player_id"] in by_id,
+      f"LLM 이 맞다고 한 번호만, 없는 번호(99)는 버린다: {found['items']}")
+check([e["reason"] for e in found["excluded"]] == ["국적이 다름"] and found["matched"] == 1
+      and found["checked"] >= 2, "맞지 않는 후보는 이유와 함께 따로 — 화면의 '제외한 후보'")
 
 print("\nNF2001 · NF2002  SQLite 저장소 · 백그라운드 미리 불러오기")
 # 넥슨 메타데이터는 디스크 사본을 쓴다 (네트워크 없이). 실제 storage/meta 가 있어야 한다.
@@ -287,8 +293,12 @@ thin = {**keeper, "gk_saves": {"games": 1, "on_target": 6, "goals": 1}}
 enough = {**keeper, "gk_saves": {"games": 4, "on_target": 20, "goals": 5}}
 check(save_rate(thin) is None and "선방 기록 부족" in key_stat_line(thin), "유효슈팅이 적으면 선방률을 숨기고 '선방 기록 부족'")
 check(save_rate(enough) == 75.0 and "선방 <b>75%</b>" in key_stat_line(enough), "골키퍼 카드 아래 한 줄 = 선방률 (패스 대신)")
-board = leaderboard([enough, {**keeper, "player_id": "x"}], "골키퍼", "전체", "save_rate", min_matches=99)
-check([r["player"]["player_id"] for r in board] == [enough["player_id"]], "선방률 순위: 표본이 있는 골키퍼만 (랭커 최소 경기 수 대신)")
+board = leaderboard([{**keeper, "player_id": "x"}, enough], "골키퍼", "전체", "save_rate", min_matches=99)
+check([r["player"]["player_id"] for r in board] == [enough["player_id"]],
+      "선방률 순위: 표본이 있는 골키퍼는 랭커 최소 경기 수와 상관없이 넣는다")
+board = leaderboard([{**keeper, "player_id": "x"}, enough], "골키퍼", "전체", "save_rate", min_matches=1)
+check([r["player"]["player_id"] for r in board] == [enough["player_id"], "x"],
+      "선방률 순위: 표본이 없는 골키퍼도 빼지 않고 표본이 있는 골키퍼 뒤에")
 
 print("\n강화 단계별 시세 · 사기/팔기 판단 · 꺼져 있던 동안 채우기 (네트워크 없음)")
 import time as _time  # noqa: E402
@@ -338,14 +348,23 @@ check(gap == 5 and len(stored["history"]) == 8 and stored["current"] == 70,
 
 
 class FakeMarket:
-    def __init__(self, blocked=False):
-        self.calls, self.blocked = [], blocked
+    """데이터센터 대신 — 선수 검색(이름 → 그 선수 카드들의 강화별 현재가)과 일별 시세."""
+
+    def __init__(self, blocked=False, listing=None):
+        self.calls, self.blocked, self.listing = [], blocked, listing or {}
+
+    def player_list(self, name, seasons=None):
+        if self.blocked:
+            raise MarketBlocked("robots")
+        self.calls.append(("list", name, tuple(seasons or ())))
+        return [{"spid": spid, "name": name, "prices": {g: 5000 * g for g in (1, 2)}, "ovr": 100, "pay": 20,
+                 "positions": [], "rating": None} for spid in self.listing.get(name, [])]
 
     def price(self, spid, grade):
         if self.blocked:
             raise MarketBlocked("robots")
-        self.calls.append((spid, grade))
-        return {"current": 1000 * grade, "history": series([1000 * grade] * 20)}
+        self.calls.append(("graph", spid, grade))
+        return {"current": 5000 * grade, "history": series([5000 * grade] * 20)}
 
 
 def settle(service, seconds=10):
@@ -354,29 +373,146 @@ def settle(service, seconds=10):
         _time.sleep(0.05)
 
 
+names = {111: "가", 222: "나", 333: "다", 444: "라"}
 mdb = FcDb(tmp / "storage" / "market.db")
-fake_market = FakeMarket()
-service = MarketService(fake_market, mdb, ttl_hours=6)
+fake_market = FakeMarket(listing={"가": [111, 112], "나": [222]})
+service = MarketService(fake_market, mdb, ttl_hours=6, name_of=names.get, refresh_minutes=0)
 service.want([111, 222], grades=[1, 2])
 settle(service)
-check(fake_market.calls == [(111, 1), (222, 1), (111, 2), (222, 2)] and set(service.table(111)) == {1, 2},
-      "비교하는 두 카드는 강화 단계를 번갈아 받아 같이 채운다")
+check(fake_market.calls[:2] == [("list", "가", ()), ("list", "나", ())]
+      and fake_market.calls[2:] == [("graph", 111, 1), ("graph", 222, 1), ("graph", 111, 2), ("graph", 222, 2)],
+      "현재가는 선수 검색 1번으로 먼저, 일별 시세는 그 뒤 — 두 카드는 강화 단계를 번갈아")
+check(set(service.table(112)) == {1, 2} and service.table(111)[2]["current"] == 10_000,
+      "선수 검색 한 번에 그 선수의 다른 카드 시세도 같이 저장된다")
 service.want([111], grades=[1, 2])
 settle(service)
-check(len(fake_market.calls) == 4, "6시간 안에 받은 시세는 다시 받지 않는다")
+check(len(fake_market.calls) == 6, "현재가 30분 · 일별 시세 6시간 안에 받은 것은 다시 받지 않는다")
+mdb.put_listing([{"spid": 111, "prices": {1: 5000}, "name": "가"}])
+mdb.put_listing([{"spid": 111, "prices": {1: 6000}, "name": "가"}])
+with mdb._conn() as conn:
+    snaps = [v for (v,) in conn.execute("SELECT value FROM market_snapshots WHERE spid = 111 AND grade = 1 ORDER BY at")]
+check(snaps == [5000, 6000] and service.table(111)[1]["prev"]["value"] == 5000,
+      "같은 시세는 다시 기록하지 않고, 바뀐 시세만 시각과 함께 쌓는다 (직전 기록 대비)")
 with mdb._conn() as conn:   # 앱이 하루 꺼져 있었던 것처럼
-    conn.execute("UPDATE market_prices SET fetched_at = '2000-01-01T00:00:00' WHERE spid = 222")
-    conn.execute("UPDATE market_prices SET fetched_at = ? WHERE spid = 111",
-                 ((__import__("datetime").datetime.now() - _td(days=1)).isoformat(timespec="seconds"),))
+    yesterday = (__import__("datetime").datetime.now() - _td(days=1)).isoformat(timespec="seconds")
+    conn.execute("UPDATE market_prices SET fetched_at = '2000-01-01T00:00:00' WHERE spid IN (222, 112)")
+    conn.execute("UPDATE market_watch SET viewed_at = '2000-01-01T00:00:00' WHERE spid = 222")
+    conn.execute("UPDATE market_prices SET fetched_at = ? WHERE spid = 111", (yesterday,))
+    conn.execute("UPDATE market_history_fetched SET fetched_at = ? WHERE spid = 111", (yesterday,))
 fake_market.calls.clear()
 queued = service.catch_up(limit=10)
 settle(service)
-check(queued == 2 and sorted(fake_market.calls) == [(111, 1), (111, 2)] and not service.table(222),
-      "다시 켜면 30일 안에 본 카드의 밀린 시세를 따라잡고, 30일 넘게 안 본 카드는 지운다")
-blocked = MarketService(FakeMarket(blocked=True), mdb)
-blocked.want([333], grades=[1, 2])
+check(queued == 3 and sorted(fake_market.calls) == [("graph", 111, 1), ("graph", 111, 2), ("list", "가", ())]
+      and not service.table(222),
+      "다시 켜면 최근 본 카드의 현재가 · 밀린 일별 시세를 따라잡고, 30일 넘게 안 본 카드는 지운다")
+fake_market.calls.clear()
+service.want([333], grades=[1])
+settle(service)
+check([c for c in fake_market.calls if c[0] == "list"] == [("list", "다", ()), ("list", "다", (0,))]
+      and ("graph", 333, 13) in fake_market.calls and service.table(333)[1]["current"] == 5000,
+      "이름 검색에 없는 카드는 시즌을 좁혀 한 번 더, 그래도 없으면 일별 시세 응답의 현재가로")
+blocked = MarketService(FakeMarket(blocked=True), mdb, name_of=names.get, refresh_minutes=0)
+blocked.want([444], grades=[1, 2])
 settle(blocked)
 check(blocked.blocked and not blocked._queued, "robots.txt 가 막으면 남은 요청을 모두 멈춘다")
+
+print("\n스쿼드 메이커 · 팀컬러 · 능력치 DB · 강화 확률")
+from data_prep.datacenter import parse_foot, parse_teamcolor_detail  # noqa: E402
+from data_prep.enhance import GRADE_OVR, odds, simulate  # noqa: E402
+from data_prep.tactics import BASE_POSITION, OVR_GRID, ovr_at  # noqa: E402
+from services.squad import slot_ovr  # noqa: E402
+from services.stats import PAGE, PASSES, StatsCrawler  # noqa: E402
+from services.teamcolor import squad_teamcolors  # noqa: E402
+
+grid = {pos: 100 for pos in OVR_GRID} | {"CAM": 120, "CM": 117}
+check(ovr_at("LCM", 5, grid) == (117 + GRADE_OVR[5], True) and ovr_at("ST", 1, None, [("ST", 110)], 105) == (110, True)
+      and ovr_at("RB", 3, None, [("ST", 110)], 105) == (105 + GRADE_OVR[3], False),
+      "자리 OVR = 그 포지션의 OVR(16칸 → 선수 검색의 포지션 목록) + 강화, 없으면 대표 OVR 로 추정 표시")
+check(slot_ovr({"ovr": 125, "usage_position": "ST"}, "LS", 3) == (125 + GRADE_OVR[3], True)
+      and slot_ovr({"ovr": 120, "positions": [("CAM", 120)]}, "ST", 1) == (120, False),
+      "AI 추천 스쿼드도 같은 자리 OVR — 데일리 차트 카드는 쓰인 포지션의 OVR")
+check(parse_foot("<strong>L5</strong> – R3") == {"L": 5, "R": 3, "main": "L"} and parse_foot("L5 - <strong>R5</strong>")["main"] == "R",
+      "주발 — 굵은 쪽이 주발 (선수 검색 · 선수 정보 둘 다)")
+gold = parse_teamcolor_detail('<div class="tit"><strong>금빛 물결 : </strong><span>8강 이상의 선수들로 구성된 팀컬러입니다.</span></div>'
+                              '<div class="level lvu1"><div class="num">5</div><ul><li>전체 능력치 +3</li><li>-</li></ul></div>'
+                              '<div class="level lvu2"><div class="num">8</div><ul><li>전체 능력치 +4</li></ul></div>')
+check(gold and gold["min_grade"] == 8 and [lv["count"] for lv in gold["levels"]] == [5, 8],
+      "강화 팀컬러 단계(lvu1 · lvu2)와 '8강 이상' 조건을 읽는다")
+
+tcs = [{"id": 1016, "name": "FC 바르셀로나", "kind": "클럽", "max_level": 4, "max_count": 11, "icon": "",
+        "detail": {"levels": [{"level": i + 1, "count": c, "effects": [f"전체 능력치 +{e}"]}
+                              for i, (c, e) in enumerate(((3, 1), (6, 3), (8, 3), (11, 4)))]}},
+       {"id": 10001, "name": "금빛 물결", "kind": "강화", "max_level": 2, "max_count": 8, "icon": "", "detail": gold}]
+members = ([{"name": f"바르사{i}", "grade": 8, "teamcolors": {"소속": [{"id": 1016, "name": "FC 바르셀로나"}], "관계": []}}
+            for i in range(6)] + [{"name": f"기타{i}", "grade": 1, "teamcolors": {"소속": [], "관계": []}} for i in range(4)]
+           + [{"name": "모름", "grade": 9, "teamcolors": None}])
+team = squad_teamcolors(members, tcs, {})
+club, wave = team["groups"]["소속"][0], team["groups"]["강화"][0]
+check(club["count"] == 6 and club["level"] == 2 and club["next"]["count"] == 8 and wave["count"] == 7 and wave["level"] == 1
+      and team["unknown"] == 1,
+      "팀컬러: 클럽 6명 → 2단계(다음 8명), 8강 이상 7명 → 금빛 물결 1단계, 팀컬러를 모르는 선수는 따로 센다")
+
+from services.cardinfo import bonus_stats  # noqa: E402
+
+card = {"ovr": 127, "stats": {"속력": 131, "짧은 패스": 123}, "summary": {"스피드": 131},
+        "position_ovr": {"CAM": 127, "CB": 108}}
+eight_five = bonus_stats(card, 8, 5, [])
+barca = bonus_stats(card, 8, 1, [["전체 능력치 +4", "짧은 패스 +3", "볼 컨트롤 +3"]])
+check(eight_five["ovr"] == 146 and eight_five["stats"]["속력"] == 150 and eight_five["position_ovr"]["CB"] == 127
+      and eight_five["exact"] and barca["stats"]["짧은 패스"] == 145 and barca["stats"]["속력"] == 150 and not barca["exact"],
+      "추가 능력치 바로 계산 = 데이터센터 값 (마라도나 8강 · 적응도 5 → OVR 146 · 속력 150, 바르셀로나 Lv.4 → 짧은 패스 145)")
+
+exact, mc = odds(1, 5, 100), simulate(1, 5, 100, runs=20000, seed=3)
+check(abs(exact["mean"] - mc["mean"]) < 0.4 and exact["median"] == mc["median"] and odds(1, 2, 0)["mean"] is None,
+      f"강화 확률(정확 계산) 평균 {exact['mean']:.2f}번 ≈ 모의 실험 {mc['mean']:.2f}번 · 게이지 0% 면 닿지 않음")
+
+sdb = FcDb(tmp / "storage" / "stats.db")
+sdb.put_card_stats([{"spid": 300000001, "name": "가", "ovr": 80, "pay": 10, "positions": [("ST", 80)], "stats": {"sprintspeed": 70}}])
+sdb.put_card_stats([{"spid": 300000001, "name": "가", "ovr": 80, "pay": 12, "positions": [("ST", 80)], "stats": {"finishing": 75}}])
+row = sdb.card_stats([300000001])[300000001]
+check(row["stats"] == {"sprintspeed": 70, "finishing": 75} and row["pay"] == 12 and row["pay_change"]["before"] == 10,
+      "능력치는 받을 때마다 칸별로 합치고, 급여가 바뀌면(로스터 패치) 전 값과 함께 남긴다")
+check(sdb.put_teamcolors([{"id": 1, "name": "가", "kind": "클럽"}]) == [] and sdb.put_teamcolors(
+      [{"id": 1, "name": "가", "kind": "클럽"}, {"id": 2, "name": "나", "kind": "국가"}]) == [2]
+      and {t["id"]: bool(t["first_seen"]) for t in sdb.teamcolors()[0]} == {1: False, 2: True},
+      "팀컬러 목록을 DB 에 — 다시 받을 때 새로 생긴 팀컬러만 '처음 본 날'과 함께 더한다")
+sdb.save_squad("내 스쿼드", {"formation": "4-4-2", "squad": {"GK": {"pid": "1", "grade": 3}}})
+saved_squads = sdb.squads()
+sdb.delete_squad("내 스쿼드")
+check(saved_squads[0]["data"]["squad"]["GK"]["grade"] == 3 and not sdb.squads(), "스쿼드 저장 · 불러오기 · 지우기")
+
+
+class FakeList:
+    """선수 검색 대신 — 시즌 하나에 카드 n장 (포지션 · OVR 이 고르게). 200장까지만 돌려준다."""
+
+    def __init__(self, n):
+        positions = list(__import__("data_prep.datacenter", fromlist=["POSITION_FILTER"]).POSITION_FILTER)
+        self.cards = [{"spid": 400_000_000 + i, "name": f"c{i}", "ovr": 60 + i % 40, "pay": 5,
+                       "positions": [(positions[i % len(positions)], 60 + i % 40)]} for i in range(n)]
+        self.calls = 0
+
+    def player_list(self, seasons=None, positions=None, ovr_min=None, ovr_max=None, skills=()):
+        self.calls += 1
+        rows = [c for c in self.cards if (not positions or c["positions"][0][0] == positions[0])
+                and (ovr_min is None or c["ovr"] >= ovr_min) and (ovr_max is None or c["ovr"] <= ovr_max)]
+        rows.sort(key=lambda c: -c["ovr"])
+        return [{**c, "stats": {k: 1 for k in skills}} for c in rows[:PAGE]]
+
+
+fake_list = FakeList(4000)
+crawler = StatsCrawler(fake_list, sdb, interval=0)
+crawler._split(400)
+for part in sdb.crawl_parts(400):
+    for _ in range(len(PASSES) - 1):
+        crawler._fill(part)
+        part = {**part, "passes": part["passes"] + 1}
+stored = sdb.card_stats([c["spid"] for c in fake_list.cards])
+check(len(stored) == 4000 and all(len(r["stats"]) == 36 for r in stored.values()),
+      f"시즌 4,000장(200장 넘음) → 포지션 · OVR 구간으로 나눠 모두 받고, 능력치 36칸이 다 모인다 (요청 {fake_list.calls}번)")
+calls = fake_list.calls
+crawler._split(400)
+check(all(p["passes"] == len(PASSES) for p in sdb.crawl_parts(400)) and fake_list.calls - calls < 60,
+      "다시 훑어도 바뀐 카드가 없으면 능력치 칸은 다시 받지 않는다 (급여 · OVR 만 갱신)")
 
 print("\nF2009 · F2010 · F2011 · F2012 · NF2004  화면 (AppTest)")
 os.environ["FCLAB_SETTINGS"] = str(tmp / "settings.toml")
@@ -390,6 +526,22 @@ def keys(at) -> set[str]:
     return {str(getattr(btn, "key", "")) for btn in at.button}
 
 
+def pitch_slots_of(at) -> list[dict]:
+    """경기장(브라우저 부품)이 받은 자리들 — AppTest 에서는 알 수 없는 요소(bidi_component)로 보인다."""
+    found = []
+
+    def walk(node):
+        children = getattr(node, "children", None)
+        for child in (children.values() if isinstance(children, dict) else children or []):
+            proto = getattr(child, "proto", None)
+            if getattr(child, "type", "") == "bidi_component" and "fclab_pitch" in proto.component_name:
+                found.extend(json.loads(proto.json)["slots"])
+            walk(child)
+
+    walk(at._tree)
+    return found
+
+
 at = app().run()
 check(any("GMS_KEY" in e.value for e in at.error), "키가 없으면 키 누락 안내")
 
@@ -398,7 +550,8 @@ empty_toml = toml.replace((tmp / "storage").as_posix(), (tmp / "empty_storage").
 (tmp / "empty.toml").write_text(empty_toml, encoding="utf-8")
 shutil.copytree(real.storage_dir / "meta", tmp / "empty_storage" / "meta", dirs_exist_ok=True)
 with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(llm, "make_embeddings", fake_embeddings), \
-        patch("data_prep.wiki_api.WikiClient", lambda *a_, **k: FakeWiki()):
+        patch("data_prep.wiki_api.WikiClient", lambda *a_, **k: FakeWiki()), \
+        patch("services.images.ImageCache._schedule", lambda self, url: None):   # 이미지도 받지 않는다 (네트워크 없음)
     os.environ["FCLAB_SETTINGS"] = str(tmp / "empty.toml")
     import streamlit as st  # noqa: E402
     st.cache_resource.clear()
@@ -477,9 +630,13 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     at.session_state["rank_group"] = "골키퍼"
     at.session_state["rank_sort"] = None   # 포지션을 바꾼 것처럼 — 기본 정렬을 다시 고르게
     at.run()
-    check(not at.exception and at.session_state["rank_sort"] == "선방률(경기 기록)"
-          and any("선방률 71%" in m.value for m in at.markdown),
-          f"파워 랭킹 골키퍼: 선방률이 기본 정렬 · 줄마다 선방률 ({keeper['name']} 3경기 · 유효슈팅 21 · 실점 6)")
+    listed = [k for k in keys(at) if k.startswith("rank_open_")]
+    check(not at.exception and at.session_state["rank_sort"] == "랭커 경기 수" and len(listed) == len(keepers),
+          f"파워 랭킹 골키퍼: 선방 기록이 있어도 기본 정렬은 랭커 경기 수 · 골키퍼 {len(listed)}명 모두")
+    at.selectbox(key="rank_sort").select("선방률(경기 기록)").run()
+    check(not at.exception and any("선방률 71%" in m.value for m in at.markdown)
+          and len([k for k in keys(at) if k.startswith("rank_open_")]) == len(keepers),
+          f"선방률 순: 기록이 있는 골키퍼가 위, 기록이 없는 골키퍼도 그 아래에 ({keeper['name']} 3경기 · 유효슈팅 21 · 실점 6)")
     at.session_state["rank_group"] = "전체"
     at.session_state["rank_sort"] = None
     at.run()
@@ -488,12 +645,72 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     check(at.session_state["page"] == "player", "상세보기 → 선수 페이지")
     at.button(key="nav_tactics").click().run()
     at.button(key="tac_power").click().run()
-    filled = [s for s in ("GK", "LB", "LCB", "RCB", "RB", "LDM", "RDM", "LAM", "CAM", "RAM", "ST") if at.session_state[f"tac_{s}"]]
-    check(len(filled) >= 1 and any('class="fc-pitch"' in m.value for m in at.markdown),
-          f"전술 추천: 파워 랭킹으로 채우기 → 경기장에 {len(filled)}자리 (표본 {len(sample)}명이라 다 못 채울 수 있다)")
+    squad_state = at.session_state["tac_squad"]
+    filled = [code for code, v in squad_state.items() if v]
+    on_pitch = [s_ for s_ in pitch_slots_of(at) if s_["name"]]
+    check(len(filled) >= 1 and len(on_pitch) == len(filled),
+          f"스쿼드: 파워 랭킹으로 채우기 → 경기장에 {len(filled)}자리 (표본 {len(sample)}명이라 다 못 채울 수 있다)")
+    check(any('class="fc-sum"' in m.value and "총 급여" in m.value for m in at.markdown)
+          and any('class="fc-prow"' in m.value for m in at.markdown) and any('class="fc-tc"' in m.value for m in at.markdown),
+          "스쿼드: 평균 OVR · 총 급여/310 요약 · 자리별 선수 줄 · 팀컬러(소속 · 강화 · 관계)")
+    code = filled[0]
+    spid_t = int(squad_state[code]["pid"])
+    app_db = FcDb(tmp / "storage" / "fclab.db")
+    app_db.put_card_info(spid_t, {"v": 2, "ovr": 110, "position": BASE_POSITION[code], "pay": 21,
+                                  "position_ovr": {pos: 90 for pos in OVR_GRID} | {BASE_POSITION[code]: 108},
+                                  "teamcolors": {"소속": [], "관계": [], "강화": []}, "traits": [], "summary": {"스피드": 100},
+                                  "foot_lr": {"L": 3, "R": 5, "main": "R"}, "clubs": [], "stats": {}})
+    squad_state[code]["grade"] = 5
+    at.run()
+    expect = 108 + GRADE_OVR[5]
+    check(any(s_["code"] == code and s_["sub"].startswith(f"{expect} · ") for s_ in pitch_slots_of(at))
+          and any(f">{expect}<small>{code} OVR" in m.value for m in at.markdown),
+          f"스쿼드: {code} 자리 OVR = 그 포지션의 OVR 108 + 5강({GRADE_OVR[5]}) = {expect} — 경기장 · 목록 모두")
+    at.text_input(key="tac_save_name").input("점검 스쿼드").run()
+    at.button(key="tac_save").click().run()
+    at.button(key="tac_clear").click().run()
+    at.button(key="tac_load_0").click().run()
+    check(at.session_state["tac_squad"].get(code) and at.session_state["tac_squad"][code]["grade"] == 5
+          and "불러왔습니다" in (at.session_state["tac_msg"] or ""), "스쿼드 저장 → 비우기 → 불러오기 (강화까지 그대로)")
+    at.button(key="tac_reset_all").click().run()
+    check(at.session_state["tac_squad"][code]["grade"] is None and at.session_state["tac_squad"][code]["pid"] == str(spid_t),
+          "스쿼드 ↺ 초기화 → 강화 · 신규 특성 · 이미지만 처음으로 (선수는 그대로)")
+
+    at.session_state["player_id"] = str(spid_t)
+    at.session_state["page"] = "player"
+    at.run()
+
+    def grid_html() -> str:
+        return next((m.value for m in at.markdown if 'class="fc-ovrgrid"' in m.value), "")
+
+    check(grid_html() != "", "선수 상세: 카드 정보 — 포지션별 오버롤 (받아 둔 상세)")
+    at.button(key=f"pc_grade_{spid_t}__8").click().run()
+    at.selectbox(key=f"pc_adapt_{spid_t}").select(5).run()
+    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
+          and f'class="up">+{GRADE_OVR[8] + 4}<' not in grid_html(),
+          f"선수 상세: 8강 + 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 초록 숫자는 적응도로 더 오른 +4 만")
+    at.button(key=f"pc_reset_{spid_t}").click().run()
+    check(f"<b>{90 + GRADE_OVR[1]}</b>" in grid_html() and 'class="up"' not in grid_html(),
+          "선수 상세: ↺ 초기화 → +1강 · 적응도 1 · 팀컬러 없음")
+    at.session_state["page"] = "tactics"   # 스쿼드로 돌아가 AI 전술 추천
+    at.run()
     if len(filled) >= 7:
         at.button(key="make_tactic").click().run()
         check(any(k.startswith("tactic:") for k in at.session_state["results"]), "AI 전술 추천(특화 기능)이 근거와 함께")
+    at.button(key="nav_grow").click().run()
+    check(not at.exception and any("공식 강화 확률표" in e.label for e in at.expander), "강화 시뮬: 카드를 고르기 전에는 공식 확률표")
+    at.session_state["gr_pick_name"] = a["name"]
+    at.session_state["gr_pick_who"] = a["pid"]
+    at.session_state["gr_pick_card"] = a["spid"]
+    at.run()
+    at.button(key="gr_try").click().run()
+    run_state = at.session_state["gr_run"]
+    check(not at.exception and len(run_state["history"]) == 1 and run_state["history"][0]["to"] == 2
+          and any("평균 시도" in m.value for m in at.markdown),
+          "강화 시뮬: +1 → +2 는 100% 성공, 목표까지 평균 시도 · 50% · 90% 횟수를 계산")
+    at.button(key="nav_players").click().run()
+    check(not at.exception and any('class="fc-prow"' in m.value for m in at.markdown) or not at.session_state.get("pl_page") is None,
+          "선수 찾기: 공식 스쿼드 메이커처럼 선수 줄 목록")
     at.button(key="nav_favorites").click().run()
     check(f"favs_{a['player_id']}" in keys(at), "즐겨찾기: 담은 선수가 보인다")
     at.button(key="nav_me").click().run()

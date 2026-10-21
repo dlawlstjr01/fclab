@@ -9,11 +9,12 @@ import streamlit as st
 import ui_parts
 from data_prep.nexon_api import FACE_IMAGE
 from data_prep.players import season_short
-from data_prep.tactics import PITCH_XY
+from data_prep.tactics import formation_of
 from services.ai import coach
 from services.insights import analyze_user, latest_squad
-from views.common import Ctx, friendly_error, get_player, log, open_player, render_sources
-from views.tactics import fill_mine_and_go
+from views.common import Ctx, card_basics, friendly_error, get_player, log, open_player, render_sources
+from views.pitch import pitch, pitch_slots, slot_ovrs
+from views.tactics import fill_mine_and_go, share_text
 
 # 넥슨 matchtype 메타데이터 이름 그대로. 친선은 랭커 평균이 없어 공식경기 랭커 평균과 비교한다.
 MATCH_TYPES = {50: "공식경기", 52: "감독모드", 60: "공식 친선", 30: "리그 친선"}
@@ -92,14 +93,28 @@ def render(ctx: Ctx) -> None:
             players = {p["position"]: get_player(ctx, str(p["spid"])) for p in squad["players"]}
             grades = {p["position"]: p["grade"] for p in squad["players"]}
             ctx.prefetcher.schedule([p["spid"] for p in squad["players"]])
-            st.markdown(ui_parts.PITCH_CSS, unsafe_allow_html=True)
-            pitch_col, side_col = st.columns([1, 1.2], gap="large")
-            pitch_col.markdown(ui_parts.pitch(slots, players, PITCH_XY, grades), unsafe_allow_html=True)
+            ovrs = slot_ovrs(ctx, slots, players, grades)   # 자리마다 그 포지션의 OVR + 강화 (카드 상세를 받기 전에는 추정 *)
+            basics = card_basics(ctx, [p["spid"] for p in squad["players"]])
+            infos = ctx.cards.get([p["spid"] for p in squad["players"]])
+            prices = {p["position"]: (ctx.market.table(p["spid"]).get(p["grade"]) or {}).get("current")
+                      for p in squad["players"]} if ctx.market.enabled else {}
+            value = sum(v for v in prices.values() if v)
+            extras = {p["position"]: {"pay": basics.get(p["spid"], {}).get("pay"),
+                                      "flag": (infos.get(p["spid"]) or {}).get("nation_flag", ""),
+                                      "price": (f"{ui_parts.bp_short(prices[p['position']])} · "
+                                                f"<b>{share_text(prices[p['position']] / value * 100)}</b>")
+                                      if prices.get(p["position"]) else ""} for p in squad["players"]}
+            pitch_col, side_col = st.columns([1.1, 1], gap="large")
+            with pitch_col:
+                pitch("me_pitch", pitch_slots(slots, players, formation_of(slots), grades, ovrs, extras))
             with side_col:
                 for p in squad["players"]:
                     card = players[p["position"]]
+                    ovr, exact = ovrs.get(p["position"], (None, True))
+                    shown = f" · {p['position']} OVR **{ovr}{'' if exact else '*'}**" if ovr else ""
                     line, btn = st.columns([3, 1], vertical_alignment="center")
-                    line.markdown(f"`{p['position']}` **{escape(card['name'])}** · {escape(card['season_short'])} +{p['grade']} · 평점 {p['rating']:.1f}")
+                    line.markdown(f"`{p['position']}` **{escape(card['name'])}** · {escape(card['season_short'])} +{p['grade']}"
+                                  f"{shown} · 평점 {p['rating']:.1f}")
                     btn.button("상세", key=f"sq_{p['spid']}_{p['position']}", on_click=open_player, args=(str(p["spid"]),),
                                width="stretch")
                 st.button("🧠 이 스쿼드로 AI 전술 추천", key="sq_tactic", type="primary", width="stretch",

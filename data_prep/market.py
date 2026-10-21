@@ -1,27 +1,16 @@
-"""강화 단계별 시세 — FC 온라인 공식 홈페이지 데이터센터의 '시세' 그래프에서 읽는다.
+"""강화 단계별 시세 — 데이터센터 '시세' 그래프 응답 읽기 · 등락 · 사기/팔기 판단 · BP 표기.
 
     POST https://fconline.nexon.com/datacenter/PlayerPriceGraph   spid=<카드>&n1strong=<강화 단계>
 
-주의
-- 넥슨 Open API 가 아니다 (Open API 에는 시세가 없다). 홈페이지 화면용 응답(HTML)을 읽는 것이라
-  넥슨 약관을 확인해야 하고, 공개 서비스로 배포할 때는 settings.toml 의 [market] enabled = false 로 끈다.
-- 모든 카드를 미리 긁지 않는다. 사용자가 연 카드 · 비교한 카드만, 요청 간격을 지켜 한 번에 하나씩 받는다.
-- 화면 구조가 바뀌면 아래 패턴(상수)만 고치면 된다. 못 읽으면 None — 앱은 '시세 없음'으로 계속 돈다.
+요청은 data_prep/datacenter.py 가 한다 (넥슨 Open API 가 아니라 홈페이지 화면용 응답 — 주의 사항은 거기에).
+화면 구조가 바뀌면 아래 패턴(상수)만 고치면 된다. 못 읽으면 None — 앱은 '시세 없음'으로 계속 돈다.
 """
 
 from __future__ import annotations
 
 import re
-import threading
-import time
 from datetime import date
-from urllib import robotparser
 
-import requests
-
-SITE = "https://fconline.nexon.com"
-PRICE_PATH = "/datacenter/PlayerPriceGraph"
-USER_AGENT = "FCLab/0.1 (SSAFY AI course project; low volume, cached)"
 MAX_GRADE = 13
 
 # 응답 HTML 에서 값을 찾는 패턴 — 화면이 바뀌면 여기만 고친다
@@ -73,55 +62,6 @@ def parse_price(html: str, today: date) -> dict | None:
             if labels and len(labels) == len(prices):
                 history = [[d.isoformat(), v] for d, v in zip(_dates(labels, today), prices)]
     return {"current": int(found.group(1).replace(",", "")), "history": history}
-
-
-class MarketClient:
-    """데이터센터 시세 요청 — 스레드가 여럿이어도 요청은 한 줄로, interval 초 간격 (1초보다 짧게는 안 보낸다)."""
-
-    def __init__(self, interval: float = 1.2, timeout: float = 15):
-        self.interval = max(1.0, interval)
-        self.timeout = timeout
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": USER_AGENT})
-        self._lock = threading.Lock()
-        self._last = 0.0
-        self._allowed: bool | None = None
-
-    def allowed(self) -> bool:
-        """robots.txt 가 이 경로를 허용하나 — 한 번만 확인한다. 읽지 못하면 허용하지 않은 것으로 본다."""
-        if self._allowed is None:
-            try:
-                r = self.session.get(SITE + "/robots.txt", timeout=self.timeout)
-                parser = robotparser.RobotFileParser()
-                parser.parse(r.text.splitlines() if r.ok else [])
-                self._allowed = r.ok and parser.can_fetch(USER_AGENT, SITE + PRICE_PATH)
-            except requests.RequestException:
-                return False   # 다음에 다시 확인
-        return self._allowed
-
-    def price(self, spid: int, grade: int) -> dict | None:
-        if not self.allowed():
-            raise MarketBlocked("robots.txt 를 확인하지 못했거나 허용되지 않은 경로입니다.")
-        for attempt in range(2):
-            with self._lock:
-                wait = self._last + self.interval - time.monotonic()
-                if wait > 0:
-                    time.sleep(wait)
-                try:
-                    r = self.session.post(SITE + PRICE_PATH, data={"spid": spid, "n1strong": grade}, timeout=self.timeout,
-                                          headers={"X-Requested-With": "XMLHttpRequest", "Referer": SITE + "/datacenter"})
-                except requests.RequestException as exc:
-                    r, error = None, exc
-                finally:
-                    self._last = time.monotonic()
-            if r is not None and r.ok:
-                return parse_price(r.text, date.today())
-            error = error if r is None else MarketError(f"HTTP {r.status_code}")
-            retry = r is None or r.status_code >= 500 or r.status_code == 429
-            if not retry or attempt == 1:
-                break
-            time.sleep(3)
-        raise MarketError(str(error))
 
 
 def change(history: list[list], days: int = 30) -> dict | None:
@@ -205,13 +145,16 @@ def signal(history: list[list], current: int | None = None) -> dict:
 
 
 def bp(value: int | None) -> str:
-    """BP 를 읽기 쉽게 — 1.25조 · 3.40억 · 1,050만."""
+    """BP 를 읽기 쉽게 — 1조 2,500억 · 15억 7,545만 · 7,545만 · 4,500 (게임 · 데이터센터와 같은 단위)."""
     if value is None:
         return "-"
-    if value >= 10**12:
-        return f"{value / 10**12:,.2f}조"
-    if value >= 10**8:
-        return f"{value / 10**8:,.2f}억"
-    if value >= 10**4:
-        return f"{value / 10**4:,.0f}만"
-    return f"{value:,}"
+    if value < 10**4:
+        return f"{value:,}"
+    man = round(value / 10**4)   # 만 단위로 반올림
+    if man >= 10**8:             # 1조 이상은 억까지만
+        jo, eok = divmod(round(value / 10**8), 10**4)
+        return f"{jo:,}조 {eok:,}억" if eok else f"{jo:,}조"
+    if man >= 10**4:
+        eok, rest = divmod(man, 10**4)
+        return f"{eok:,}억 {rest:,}만" if rest else f"{eok:,}억"
+    return f"{man:,}만"

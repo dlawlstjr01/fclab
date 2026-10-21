@@ -71,28 +71,42 @@ def coach_evidence(summary: dict) -> list[dict]:
     return evidence
 
 
-def tactic_evidence(squad: list[tuple[str, dict]]) -> list[dict]:
-    """[근거 1] 전술 항목 설명, [근거 2~] 자리마다 선수 메타데이터 (같은 색인 텍스트를 그대로)."""
+def tactic_evidence(squad: list[tuple[str, dict]], facts: dict | None = None) -> list[dict]:
+    """[근거 1] 전술 항목 설명, [근거 2] 스쿼드 요약(평균 OVR · 총 급여 · 적용 팀컬러, 있으면),
+    [근거 3~] 자리마다 그 자리에서의 OVR · 강화 + 선수 메타데이터 (같은 색인 텍스트를 그대로)."""
     from data_prep.tactics import tactics_guide
 
     evidence = [{
-        "number": 1, "source_type": "guide", "source_label": "FC LAB 전술 항목 정리 (data_prep/tactics.py)",
+        "number": 1, "source_type": "guide", "source_label": "FC LAB 전술 항목 정리",
         "title": "FC 온라인 팀 · 개인 전술 항목", "url": "", "text": tactics_guide(),
     }]
+    slots = (facts or {}).get("slots", {})
+    if facts:
+        avg = f"{facts['avg']:.1f}" if facts.get("avg") else "-"
+        evidence.append({
+            "number": 2, "source_type": "datacenter", "source_label": "FC 온라인 데이터센터 (포지션별 오버롤 · 급여 · 팀컬러)",
+            "title": "스쿼드 요약", "url": "",
+            "text": (f"평균 OVR {avg} (자리마다 그 포지션에서의 OVR + 강화) · 총 급여 {facts['pay']}/{facts['pay_cap']}\n"
+                     f"적용 팀컬러: {'; '.join(facts['teamcolors']) or '없음'}"),
+        })
     for slot, player in squad:
+        fact = slots.get(slot) or {}
+        ovr = (f" · {slot} 자리 OVR {fact['ovr']}{'' if fact.get('exact') else '(추정)'} (+{fact.get('grade') or 1}강)"
+               if fact.get("ovr") else "")
         evidence.append({
             "number": len(evidence) + 1, "source_type": "player_meta",
             "source_label": "선수 메타데이터 (넥슨 Open API · 위키백과 요약)",
-            "title": f"{slot} 자리 — {player_label(player)}", "url": player.get("wiki_url") or "",
-            "text": index_text(player)[:900],
+            "title": f"{slot} 자리 — {player_label(player)}{ovr}", "url": player.get("wiki_url") or "",
+            "text": (f"{slot} 자리에서의 OVR {fact['ovr']} (강화 +{fact.get('grade') or 1} 포함)\n" if fact.get("ovr") else "")
+                    + index_text(player)[:900],
         })
     return evidence
 
 
-def recommend_tactics(formation: str, style: str, squad: list[tuple[str, dict]], model) -> dict:
+def recommend_tactics(formation: str, style: str, squad: list[tuple[str, dict]], model, facts: dict | None = None) -> dict:
     from data_prep.prompts import tactic_messages
 
-    evidence = tactic_evidence(squad)
+    evidence = tactic_evidence(squad, facts)
     answer = reply_text(model.invoke(tactic_messages(formation, style, evidence))).strip()
     return {"answer": answer, "evidence": [{k: e[k] for k in ("number", "source_type", "source_label", "title", "url")}
                                            for e in evidence]}

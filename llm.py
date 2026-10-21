@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
+from functools import cache
 
+import httpx
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 import config
@@ -24,9 +27,18 @@ def _key() -> str:
     return key
 
 
+@cache
+def _http_clients() -> dict:
+    """채팅 · 임베딩이 같이 쓰는 HTTP 연결 — 클라이언트마다 인증서를 따로 읽으면 앱이 켜질 때 1.7초가 더 걸렸다."""
+    context = ssl.create_default_context()
+    return {"http_client": httpx.Client(verify=context, timeout=60),
+            "http_async_client": httpx.AsyncClient(verify=context, timeout=60)}
+
+
 def make_chat_model(settings: config.Settings) -> ChatOpenAI:
     return ChatOpenAI(
-        model=settings.chat_model, api_key=_key(), base_url=settings.base_url, timeout=60, max_retries=2
+        model=settings.chat_model, api_key=_key(), base_url=settings.base_url, timeout=60, max_retries=2,
+        **_http_clients(),
     )
 
 
@@ -38,6 +50,7 @@ def make_embeddings(settings: config.Settings) -> OpenAIEmbeddings:
         api_key=_key(),
         base_url=settings.base_url,
         check_embedding_ctx_length=False,
+        **_http_clients(),
     )
 
 

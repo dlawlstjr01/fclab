@@ -9,18 +9,88 @@ from __future__ import annotations
 
 from html import escape
 
+from data_prep.datacenter import ABILITY_GROUPS
+from data_prep.enhance import GRADE_OVR
 from data_prep.players import KEY_STATS, STATS, key_stat_line, save_rate, stat_values
 
 THEMES = {
     "light": {
         "surface": "#fcfcfb", "ink": "#0b0b0b", "ink2": "#52514e", "muted": "#898781",
         "grid": "#e1e0d9", "s1": "#2a78d6", "s2": "#eb6834", "border": "rgba(11,11,11,0.10)", "track": "#efeee9",
+        "raise": "#ffffff", "raise_hover": "#f3f5f4", "edge": "rgba(11,11,11,0.22)", "faint": "rgba(11,11,11,0.13)",
     },
     "dark": {
         "surface": "#141c2e", "ink": "#f0efec", "ink2": "#c3c2b7", "muted": "#898781",
         "grid": "#25304a", "s1": "#3987e5", "s2": "#d95926", "border": "rgba(255,255,255,0.08)", "track": "#22304a",
+        # 버튼 면 · 테두리 — 바탕(#0a0f1c)보다 한 단계 밝게, 테두리는 또렷하게 (바탕과 비슷해 눈에 안 띈다는 의견)
+        "raise": "#18223a", "raise_hover": "#1f2c49", "edge": "#3a4c74", "faint": "rgba(255,255,255,0.14)",
     },
 }
+CARD_CSS = """
+/* 시즌 카드 그림 — 시즌별 카드 배경 + 선수 (공식 스쿼드 메이커처럼). 크기는 감싼 칸의 너비를 따른다 */
+/* 시즌마다 카드 몸통 크기가 달라, 몸통 칸(--x0 · --y0 · --w · --h, 배경 그림에서 잰 비율)에 맞춰 선수 · OVR 을 놓는다 */
+.fc-cv { --x0: .19; --y0: .1; --w: .62; --h: .79; position: relative; width: 100%; aspect-ratio: 340 / 400;
+  background: center / contain no-repeat; container-type: inline-size; }
+.fc-cv.nobg { background: radial-gradient(120% 90% at 50% 0%, #2b4a7d 0%, #142441 60%, #0b1426 100%); border-radius: 12%; }
+.fc-cv .fig { position: absolute; left: calc(var(--x0) * 100% + var(--w) * 24%); width: calc(var(--w) * 78%);
+  top: calc(var(--y0) * 100% + var(--h) * 6%); height: calc(var(--h) * 72%); display: flex; align-items: flex-end;
+  justify-content: center; }
+.fc-cv .fig img, .fc-cv .fig object { max-width: 100%; max-height: 100%; filter: drop-shadow(0 6px 10px rgba(0,0,0,.45)); }
+.fc-cv .ov { position: absolute; left: calc(var(--x0) * 100% + var(--w) * 2%); width: calc(var(--w) * 30%);
+  top: calc(var(--y0) * 100% + var(--h) * 9%); display: flex; flex-direction: column; align-items: center; gap: 1.2cqw;
+  line-height: 1; z-index: 1; text-shadow: 0 0 3px rgba(0,0,0,.9), 0 1px 3px rgba(0,0,0,.7); }
+.fc-cv .ov b { font-size: calc(var(--w) * 24cqw); font-weight: 900; color: #fff; letter-spacing: -.02em; }
+.fc-cv .ov span { font-size: calc(var(--w) * 15cqw); font-weight: 900; }
+/* 밝은 카드(ICON · ICON TM 등)는 OVR 을 어둡게 — 흰 배경에 흰 글자가 묻히지 않게 */
+.fc-cv.light .ov { text-shadow: 0 0 3px rgba(255,255,255,.85); }
+.fc-cv.light .ov b { color: #1d1608; }
+.fc-cv.light .ov span.fw { color: #c8102e; } .fc-cv.light .ov span.mf { color: #0b7a45; }
+.fc-cv.light .ov span.df { color: #1557b0; } .fc-cv.light .ov span.gk { color: #a35f00; }
+.fc-cv .gr { position: absolute; right: calc((1 - var(--x0) - var(--w)) * 100% + var(--w) * 6%);
+  top: calc(var(--y0) * 100% + var(--h) * 7%); z-index: 1; }
+
+/* 포지션 · 급여 · 강화 표시 (공식 사이트 색) */
+.fc-pos { display: inline-block; padding: 1px 7px; border-radius: 7px; font-size: 11px; font-weight: 900; letter-spacing: .02em;
+  border: 1px solid currentColor; line-height: 1.5; }
+.fc-pos.fw, .fc-cv .ov span.fw { color: #ff5d6c; } .fc-pos.mf, .fc-cv .ov span.mf { color: #2fd389; }
+.fc-pos.df, .fc-cv .ov span.df { color: #4aa3ff; } .fc-pos.gk, .fc-cv .ov span.gk { color: #f5b83d; }
+.fc-pay { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 26px; font-size: 11px;
+  font-weight: 900; color: #fff; background: #12937a; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.fc-grade { display: inline-block; padding: 0 6px; border-radius: 5px; font-size: 11px; font-weight: 900; line-height: 18px; }
+/* 강화 색 — 공식 데이터센터와 같다 (1 회색 · 2~4 동 · 5~7 은 · 8~10 금 · 11~13 백금) */
+.fc-grade.g1, .pc .gd.g1 { color: #c5c8c9; background: linear-gradient(140deg, #51545a 0%, #42464d 100%); border: 1px solid #393a3c; }
+.fc-grade.g2, .pc .gd.g2 { color: #7e3f27; background: linear-gradient(140deg, #de946b 0%, #ad5f42 100%); border: 1px solid #864229; }
+.fc-grade.g5, .pc .gd.g5 { color: #4e545e; background: linear-gradient(140deg, #d8d9dc 0%, #b8bdca 100%); border: 1px solid #a5a8ae; }
+.fc-grade.g8, .pc .gd.g8 { color: #695100; background: linear-gradient(140deg, #f9dd62 0%, #dca908 100%); border: 1px solid #cda000; }
+.fc-grade.g11, .pc .gd.g11 { color: #2d2b43; background: linear-gradient(140deg, #f4f6ff 0%, #c9d2f2 45%, #9fb0e6 100%); border: 1px solid #5274c0; }
+
+
+/* 경기장 자리의 카드 — OVR · 포지션 · 급여(왼쪽 위), 보유 신규 특성(오른쪽 위), 강화(왼쪽 아래), 국기 · 이름(아래), 밑에 시세 */
+.pc { width: 100%; }
+.pc .fc-cv .ov b { font-size: calc(var(--w) * 29cqw); }
+.pc .fc-cv .ov span { font-size: calc(var(--w) * 17cqw); }
+.pc .fc-cv .ov .fc-pay { width: calc(var(--w) * 25cqw); height: calc(var(--w) * 28cqw); font-size: calc(var(--w) * 14cqw);
+  margin-top: .5cqw; color: #e9eef6; background: rgba(40,46,58,.85); text-shadow: none; }
+.pc .fc-cv.light .ov .fc-pay { color: #fff; background: #6b6f78; }
+.pc .lc { position: absolute; z-index: 1; left: calc(var(--x0) * 100% + var(--w) * 2%); width: calc(var(--w) * 30%);
+  top: calc(var(--y0) * 100% + var(--h) * 60%); display: flex; justify-content: center; }
+.pc .fc-cv .ov small { font-size: calc(var(--w) * 14cqw); font-weight: 800; color: #ffd166; }
+.pc .tr { position: absolute; z-index: 1; right: calc((1 - var(--x0) - var(--w)) * 100% + var(--w) * 4%);
+  top: calc(var(--y0) * 100% + var(--h) * 4%); width: calc(var(--w) * 28%); filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
+.pc .gd { min-width: calc(var(--w) * 22cqw); padding: .3cqw 1cqw; border-radius: 3px; font-size: calc(var(--w) * 17cqw);
+  font-weight: 900; font-style: normal; line-height: 1.2; text-align: center; text-shadow: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+.pc .nm { position: absolute; z-index: 1; left: calc(var(--x0) * 100% + var(--w) * 4%); width: calc(var(--w) * 92%);
+  top: calc(var(--y0) * 100% + var(--h) * 77%); font-size: calc(var(--w) * 16cqw); font-weight: 800; line-height: 1.15;
+  text-align: center; color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.pc .fl { position: absolute; z-index: 1; left: calc(var(--x0) * 100%); width: calc(var(--w) * 100%);
+  top: calc(var(--y0) * 100% + var(--h) * 87%); display: flex; justify-content: center; }
+.pc .fl img { height: calc(var(--w) * 13cqw); box-shadow: 0 0 2px rgba(0,0,0,.6); }
+.pc .fc-cv.light .nm { color: #1d1608; text-shadow: 0 0 3px rgba(255,255,255,.9); }
+.pc .price { margin-top: 1px; font-size: 10.5px; font-weight: 700; color: #e6ecf5; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+.pc .price b { color: #ffd166; }
+"""
 STATUS = {"승": "#0ca30c", "무": "#898781", "패": "#d03b3b"}
 ACCENT = "#16e08a"
 
@@ -33,8 +103,20 @@ def css(theme: str) -> str:
 h1, h2, h3 {{ letter-spacing: -0.02em; }}
 a {{ color: {ACCENT}; }}
 
+/* 브라우저 방문 기록을 맞추는 보이지 않는 칸 (views/common.nav_bridge) */
+.st-key-nav_bridge_box {{ display: none; }}
+
 /* 상단 바 — 로고는 버튼(누르면 홈) */
-.st-key-nav_brand button p {{ font-size: 21px; font-weight: 900; letter-spacing: .02em; color: {ACCENT}; white-space: nowrap; }}
+.fc-logo {{ font-size: 21px; font-weight: 900; letter-spacing: .02em; color: {ACCENT}; white-space: nowrap; text-align: center;
+  line-height: 40px; user-select: none; }}
+.st-key-nav_brand_box {{ position: relative; gap: 0; }}
+.st-key-nav_brand_box [data-testid="stElementContainer"]:has(.stButton) {{ position: absolute; inset: 0; z-index: 3; margin: 0; }}
+.st-key-nav_brand_box .stButton, .st-key-nav_brand_box .stButton button {{ width: 100%; height: 100%; min-height: 0; }}
+.st-key-nav_brand_box .stButton button {{ opacity: 0; cursor: pointer; }}
+.st-key-nav_brand_box:has(button:focus-visible) .fc-logo {{ text-decoration: underline; text-underline-offset: 6px; }}
+/* 메뉴 버튼 — 옅은 테두리로 바탕과 구분, 올리면 초록 테두리 (지금 화면은 초록 면) */
+.st-key-navbar button[data-testid="stBaseButton-tertiary"] {{ border: 1px solid {t['faint']}; border-radius: 10px; }}
+.st-key-navbar button[data-testid="stBaseButton-tertiary"]:hover {{ border-color: {ACCENT}; background: rgba(127,127,127,.10); }}
 .st-key-nav_back button p {{ font-size: 18px; font-weight: 800; }}
 
 /* 카드 전체를 누르는 타일 — 타일 위에 투명 버튼을 겹친다 (키보드로 가면 테두리가 보인다) */
@@ -45,6 +127,22 @@ div[class*="st-key-tile_"] .stButton button {{ opacity: 0; cursor: pointer; }}
 div[class*="st-key-tile_"] .stButton button:focus-visible {{ opacity: 1; background: transparent; color: transparent;
   border: 2px solid {ACCENT}; }}
 div[class*="st-key-tile_"]:hover .fc-tile {{ transform: translateY(-2px); border-color: rgba(22,224,138,.55); }}
+
+/* 버튼 · 칩 — 바탕과 구분되게 한 단계 밝은 면 + 또렷한 테두리, 올리면 초록 테두리 */
+button[data-testid="stBaseButton-secondary"], button[data-testid="stPopoverButton"],
+button[data-variant="pills"][aria-checked="false"] {{
+  background: {t['raise']}; border: 1px solid {t['edge']}; color: {t['ink']}; }}
+button[data-testid="stBaseButton-secondary"]:hover:not(:disabled), button[data-testid="stPopoverButton"]:hover,
+button[data-variant="pills"][aria-checked="false"]:hover {{
+  background: {t['raise_hover']}; border-color: {ACCENT}; color: {t['ink']}; }}
+button[data-testid="stBaseButton-secondary"]:disabled {{ opacity: .45; }}
+button[data-testid="stBaseButton-primary"] {{ box-shadow: 0 4px 14px rgba(22,224,138,.22); }}
+button[data-variant="pills"][aria-checked="true"] {{ font-weight: 700; }}
+/* 글자 버튼(상단 메뉴 · 추천 검색어) — 올리면 옅은 면, 추천 검색어는 칩 모양으로 */
+button[data-testid="stBaseButton-tertiary"]:hover {{ background: rgba(127,127,127,.12); }}
+.st-key-wrap_chips button[data-testid="stBaseButton-tertiary"] {{ background: {t['raise']}; border: 1px solid {t['edge']};
+  border-radius: 999px; padding: 4px 12px; }}
+.st-key-wrap_chips button[data-testid="stBaseButton-tertiary"]:hover {{ border-color: {ACCENT}; }}
 
 /* 상단 메뉴 — 넓은 화면은 한 줄 고정, 900px 이하에서만 줄바꿈 (모바일에서도 세로로 길게 쌓이지 않게) */
 .st-key-navbar [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap; gap: .35rem; }}
@@ -81,6 +179,13 @@ div[class*="st-key-grid_"] [data-testid="stColumn"] {{ min-width: 150px; flex: 1
   .fc-line .st {{ font-size: 11.5px; }}
   .fc-section {{ font-size: 17px; }}
 }}
+
+/* 다른 시즌 카드 넘기기 — 다음은 오른쪽에서, 이전은 왼쪽에서 밀려 들어온다 (views/player.py 의 slide_* 칸) */
+@keyframes fc-from-right {{ from {{ opacity: 0; transform: translateX(56px); }} to {{ opacity: 1; transform: none; }} }}
+@keyframes fc-from-left {{ from {{ opacity: 0; transform: translateX(-56px); }} to {{ opacity: 1; transform: none; }} }}
+div[class*="st-key-slide_next_"] {{ animation: fc-from-right .38s ease-out; }}
+div[class*="st-key-slide_prev_"] {{ animation: fc-from-left .38s ease-out; }}
+.fc-dots {{ text-align: center; letter-spacing: 6px; color: {ACCENT}; font-size: 12px; }}
 
 /* 순위 · 목록 행 */
 .fc-line {{ display: flex; align-items: center; gap: 12px; min-height: 52px; }}
@@ -146,6 +251,141 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 .fc-card .name {{ font-size: 24px; font-weight: 900; margin: 4px 0 2px; }}
 .fc-card .sub {{ font-size: 12px; color: #b9c3d6; }}
 
+{CARD_CSS}
+
+/* 선수 줄 — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 / 시즌 이름 · 주발 / 국적 · 팀컬러 / 능력치 · 특성 · OVR */
+.fc-prow {{ display: grid; grid-template-columns: 74px minmax(0, 1fr) auto; gap: 14px; align-items: center;
+  padding: 10px 16px 10px 10px; border-radius: 16px; background: {t['surface']}; border: 1px solid {t['border']};
+  margin-bottom: 8px; }}
+.fc-prow .l1 {{ display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }}
+.fc-prow .l1 .ssn {{ height: 17px; }}
+.fc-prow .l1 .nm {{ font-size: 15.5px; font-weight: 800; color: {t['ink']}; }}
+.fc-prow .l2 {{ font-size: 12.5px; color: {t['ink2']}; margin-top: 3px; }}
+.fc-prow .l2 i {{ font-style: normal; color: {t['muted']}; margin: 0 6px; }}
+.fc-prow .foot b {{ color: {t['ink']}; }}
+.fc-prow .l3 {{ display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; min-height: 18px; }}
+.fc-prow .l3 img {{ height: 18px; max-width: 26px; object-fit: contain; }}
+.fc-prow .l4 {{ font-size: 11.5px; color: {t['ink2']}; margin-top: 4px; font-variant-numeric: tabular-nums; }}
+.fc-prow .l4 b {{ color: {t['ink']}; font-weight: 700; }}
+.fc-prow .note {{ font-size: 12px; color: {t['ink2']}; margin-top: 4px; }}
+.fc-prow .side {{ display: flex; align-items: center; gap: 12px; }}
+.fc-prow .traits {{ display: flex; align-items: center; gap: 4px; }}
+.fc-prow .traits img {{ width: 30px; height: 30px; padding: 3px; border-radius: 8px; background: {t['raise']};
+  border: 1px solid {t['edge']}; box-sizing: border-box; }}
+.fc-prow .traits img.new {{ border-color: #f2c94c; }}
+.fc-prow .traits small {{ font-size: 11px; color: {t['muted']}; }}
+.fc-prow .ovr {{ font-size: 30px; font-weight: 900; color: #ff6b6b; min-width: 54px; text-align: right;
+  font-variant-numeric: tabular-nums; }}
+.fc-prow .ovr small {{ display: block; font-size: 10.5px; font-weight: 700; color: {t['muted']}; text-align: right; }}
+.fc-prow .wait {{ font-size: 11.5px; color: {t['muted']}; }}
+@media (max-width: 760px) {{ .fc-prow {{ grid-template-columns: 58px minmax(0, 1fr); }}
+  .fc-prow .side {{ grid-column: 1 / -1; justify-content: space-between; }} }}
+div[class*="st-key-prow_"] {{ position: relative; gap: 0; }}
+div[class*="st-key-prow_"] [data-testid="stElementContainer"]:has(.stButton) {{ position: absolute; inset: 0 0 8px 0; z-index: 3;
+  margin: 0; }}
+div[class*="st-key-prow_"] .stButton, div[class*="st-key-prow_"] .stButton button {{ width: 100%; height: 100%; }}
+div[class*="st-key-prow_"] .stButton button {{ opacity: 0; cursor: pointer; }}
+div[class*="st-key-prow_"] .stButton button:focus-visible {{ opacity: 1; background: transparent; color: transparent;
+  border: 2px solid {ACCENT}; }}
+div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55); }}
+.fc-tile .cvw {{ width: 104px; margin: 24px auto 2px; }}
+.fc-tile .meta {{ display: flex; align-items: center; justify-content: center; gap: 7px; margin: 3px 0 1px;
+  font-size: 12px; color: {t['ink2']}; }}
+.fc-tile .meta .fc-pay {{ width: 22px; height: 24px; font-size: 10.5px; }}
+.fc-tile .meta .fc-pay.wait {{ background: {t['grid']}; }}
+.fc-tile .meta .foot b {{ color: #fff; }}
+.fc-card .cvbig {{ width: min(240px, 86%); margin: 30px auto 4px; }}
+
+/* 선수 특성 · 팀컬러 · 포지션별 OVR · 능력치 */
+.fc-traits .fc-trait-row {{ display: grid; grid-template-columns: 44px 104px minmax(0, 1fr); gap: 8px; align-items: center;
+  padding: 5px 0; border-top: 1px solid {t['grid']}; font-size: 13px; color: {t['ink']}; }}
+.fc-traits .fc-trait-row:first-of-type {{ border-top: none; }}
+.fc-traits .code {{ font-size: 11px; font-weight: 900; color: {ACCENT}; }}
+.fc-trait {{ display: inline-flex; align-items: center; gap: 4px; margin: 2px 6px 2px 0; padding: 2px 8px 2px 3px;
+  border-radius: 999px; background: {t['track']}; color: {t['ink']}; font-size: 12px; }}
+.fc-trait img {{ width: 20px; height: 20px; }}
+.fc-trait b {{ margin-left: 3px; font-size: 9.5px; font-weight: 900; color: #1b1405; background: #f2c94c; border-radius: 4px;
+  padding: 0 4px; }}
+.fc-trait.new {{ box-shadow: inset 0 0 0 1px #f2c94c; }}
+.fc-trait.muted {{ color: {t['muted']}; padding-left: 8px; }}
+.fc-chipwrap {{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }}
+.fc-chipwrap .fc-trait {{ margin: 0; min-height: 26px; box-sizing: border-box; }}
+.fc-trait i.noimg {{ display: inline-block; width: 20px; height: 20px; border-radius: 50%; background: {t['grid']}; }}
+.fc-stack {{ display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }}
+.fc-stack .fc-panel {{ margin: 0; }}
+.fc-ovrgrid small.up, .fc-abil small.up {{ margin-left: 3px; font-size: 10.5px; font-weight: 700; color: {ACCENT}; }}
+.fc-ovrgrid small.up {{ display: block; line-height: 1; }}
+.fc-abil .it span {{ white-space: nowrap; }}
+.fc-tc {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }}
+.fc-tc .grp {{ border-radius: 12px; padding: 10px 12px; background: {t['track']}; }}
+.fc-tc .head {{ display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 800; color: {t['ink2']}; }}
+.fc-tc .head .cnt {{ margin-left: auto; font-size: 20px; font-weight: 900; color: {t['ink']}; }}
+.fc-tc .best {{ display: flex; align-items: center; gap: 8px; margin-top: 8px; }}
+.fc-tc .best img {{ width: 34px; height: 34px; object-fit: contain; }}
+.fc-tc .best b {{ font-size: 13.5px; color: {t['ink']}; }}
+.fc-tc .best small, .fc-tc .eff {{ display: block; font-size: 11.5px; color: {t['ink2']}; }}
+.fc-tc .eff {{ margin-top: 4px; }}
+.fc-tc .lv {{ display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; font-weight: 900;
+  color: #0b1426; background: {ACCENT}; }}
+.fc-tc .none {{ margin-top: 8px; font-size: 12px; color: {t['muted']}; }}
+.fc-tc .others {{ margin-top: 6px; font-size: 11px; color: {t['muted']}; }}
+@media (max-width: 760px) {{ .fc-tc {{ grid-template-columns: 1fr; }} }}
+.fc-ovrgrid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }}
+.fc-ovrgrid div {{ border-radius: 10px; padding: 6px 4px; text-align: center; background: {t['track']}; }}
+.fc-ovrgrid div span {{ display: block; font-size: 11px; font-weight: 800; }}
+.fc-ovrgrid div b {{ font-size: 17px; color: {t['ink']}; font-variant-numeric: tabular-nums; }}
+.fc-ovrgrid div.best {{ box-shadow: inset 0 0 0 2px {ACCENT}; }}
+.fc-ovrgrid .empty {{ background: transparent; }}
+.fc-abil {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 18px; }}
+.fc-abil .grp {{ grid-column: 1 / -1; margin-top: 6px; font-size: 12px; font-weight: 800; color: {t['ink2']}; }}
+.fc-abil .it {{ display: flex; justify-content: space-between; font-size: 13px; color: {t['ink2']}; padding: 2px 0;
+  border-bottom: 1px dashed {t['grid']}; }}
+.fc-abil .it b {{ font-variant-numeric: tabular-nums; }}
+.fc-abil .v1 {{ color: #8fb3ff; }} .fc-abil .v2 {{ color: #2fd389; }} .fc-abil .v3 {{ color: #f2c94c; }}
+.fc-abil .v4 {{ color: #ff6b6b; }}
+@media (max-width: 760px) {{ .fc-abil {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
+.fc-sum {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }}
+.fc-sum > div {{ flex: 1 1 120px; min-width: 0; border-radius: 12px; padding: 8px 12px; background: {t['track']}; }}
+.fc-sum span {{ display: block; font-size: 11px; color: {t['muted']}; }}
+.fc-sum b {{ font-size: 18px; color: {t['ink']}; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+.fc-sum b.txt {{ font-size: 15px; }}
+.fc-sum small {{ font-size: 11px; color: {t['ink2']}; }}
+.fc-gauge {{ height: 8px; border-radius: 4px; background: {t['grid']}; overflow: hidden; margin-top: 6px; }}
+.fc-gauge i {{ display: block; height: 8px; background: {ACCENT}; }}
+.fc-gauge.over i {{ background: #ff6b6b; }}
+
+/* 강화 등급 버튼 (views/widgets.grade_buttons) — 등급마다 공식 색, 고른 것은 흰 테두리 · 나머지는 흐리게 */
+.fc-gradelabel {{ font-size: 14px; line-height: 1.5; color: {t['ink']}; margin: 0; }}
+div[class*="st-key-gbtn_"] button {{ min-height: 0; padding: 3px 9px; border-radius: 7px; font-weight: 900; }}
+div[class*="st-key-gbtn_"] button p {{ font-size: 12.5px; font-weight: 900; }}
+div[class*="st-key-gbtn_g1_"] button {{ color: #c5c8c9; background: linear-gradient(140deg, #51545a 0%, #42464d 100%); border: 1.5px solid #393a3c; }}
+div[class*="st-key-gbtn_g2_"] button {{ color: #7e3f27; background: linear-gradient(140deg, #de946b 0%, #ad5f42 100%); border: 1.5px solid #864229; }}
+div[class*="st-key-gbtn_g5_"] button {{ color: #4e545e; background: linear-gradient(140deg, #d8d9dc 0%, #b8bdca 100%); border: 1.5px solid #a5a8ae; }}
+div[class*="st-key-gbtn_g8_"] button {{ color: #695100; background: linear-gradient(140deg, #f9dd62 0%, #dca908 100%); border: 1.5px solid #cda000; }}
+div[class*="st-key-gbtn_g11_"] button {{ color: #2d2b43; background: linear-gradient(140deg, #f4f6ff 0%, #c9d2f2 45%, #9fb0e6 100%); border: 1.5px solid #5274c0; }}
+div[class*="st-key-gbtn_"][class*="_off_"] button {{ opacity: .5; }}
+div[class*="st-key-gbtn_"][class*="_off_"] button:hover {{ opacity: .85; }}
+div[class*="st-key-gbtn_"][class*="_on_"] button {{ opacity: 1; box-shadow: 0 0 0 2px #ffffff, 0 0 12px rgba(255,255,255,.45); }}
+
+/* 스쿼드 위 요약 (팀컬러 · 구단가치 · 주요 선수) · 경기장 아래 칩 (포메이션 · 소속 · 특성 팀컬러 · 급여) */
+.fc-sqtop {{ display: flex; gap: 0; flex-wrap: wrap; border-radius: 14px; background: {t['surface']}; border: 1px solid {t['border']};
+  margin-bottom: 12px; }}
+.fc-sqtop > div {{ flex: 1 1 160px; padding: 10px 16px; border-left: 1px solid {t['border']}; min-width: 0; }}
+.fc-sqtop > div:first-child {{ border-left: none; }}
+.fc-sqtop span {{ display: block; font-size: 11.5px; color: #c2a5ff; font-weight: 700; }}
+.fc-sqtop b {{ display: block; font-size: 16px; color: {t['ink']}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.fc-sqtop small {{ font-size: 11px; color: {t['muted']}; font-weight: 500; }}
+.fc-sqchips {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 4px; }}
+.fc-sqchips span {{ padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 800; border: 1px solid; }}
+.fc-sqchips .fm {{ color: #c2a5ff; border-color: rgba(194,165,255,.45); background: rgba(194,165,255,.10); }}
+.fc-sqchips .tc {{ color: #6cb8ff; border-color: rgba(108,184,255,.45); background: rgba(108,184,255,.10); }}
+.fc-sqchips .ft {{ color: #2fd389; border-color: rgba(47,211,137,.45); background: rgba(47,211,137,.10); }}
+.fc-sqchips .en {{ color: #f2c94c; border-color: rgba(242,201,76,.45); background: rgba(242,201,76,.10); }}
+.fc-sqchips .pay {{ color: {t['ink2']}; border-color: {t['border']}; background: {t['track']}; }}
+.fc-sqchips .pay.over {{ color: #ff6b6b; border-color: rgba(255,107,107,.5); }}
+.fc-sqchips .none {{ color: {t['muted']}; border-color: {t['border']}; font-weight: 600; }}
+button[data-testid="stPopoverButton"] p {{ white-space: nowrap; }}
+
 /* 칩 */
 .fc-chips {{ display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }}
 .fc-chip {{ font-size: 12px; padding: 3px 10px; border-radius: 999px; background: {t['track']}; color: {t['ink2']}; }}
@@ -155,6 +395,17 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 .fc-ai {{ border-radius: 14px; padding: 12px 14px; margin: 8px 0 12px; font-size: 14.5px; line-height: 1.6;
   background: linear-gradient(90deg, rgba(22,224,138,.12), rgba(57,135,229,.10)); border: 1px solid rgba(22,224,138,.25); }}
 .fc-ai .tag {{ font-size: 11px; font-weight: 800; color: {ACCENT}; letter-spacing: .04em; display: block; margin-bottom: 3px; }}
+
+/* 선수 소개 — 길면 다섯 줄에서 접고 아래를 흐리게. '더 보기'는 <details> 의 열린 상태를 :has 로 읽는다 */
+.fc-intro {{ margin: 0 0 12px; }}
+.fc-intro .body, .fc-intro .body p {{ font-size: 14.5px; line-height: 1.75; color: {t['ink']}; }}
+.fc-intro .body p {{ margin: 0 0 .4em; }}
+.fc-intro.folded:not(:has(details[open])) .body {{ max-height: 8.75em; overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent); mask-image: linear-gradient(180deg, #000 55%, transparent); }}
+.fc-intro summary {{ display: inline-block; list-style: none; cursor: pointer; margin-top: 2px;
+  font-size: 13px; font-weight: 700; color: {ACCENT}; }}
+.fc-intro summary::-webkit-details-marker {{ display: none; }}
+.fc-intro details[open] .more, .fc-intro details:not([open]) .less {{ display: none; }}
 
 /* 스탯 막대 · 포지션 사용 · 비교 차트 (같은 판) */
 .fc-panel {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 14px; padding: 14px 16px 10px; }}
@@ -192,26 +443,257 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 
 # ── 이미지 ─────────────────────────────────────────────────────
 
+def _no_cache(url: str | None) -> str | None:
+    return url or None
+
+
+_resolve = _no_cache
+
+
+def _no_frame(url: str | None) -> dict | None:
+    return None
+
+
+_frame = _no_frame
+
+
+def use_card_frames(frame) -> None:
+    """시즌 카드 배경 → {box: (x0, y0, w, h) 비율, light: OVR 자리가 밝은지} (services/images.ImageCache.frame)."""
+    global _frame
+    _frame = frame
+
+
+def use_image_cache(resolve) -> None:
+    """이미지 주소 → 받아 둔 사본 주소 (services/images.ImageCache.resolve). 앱이 켜질 때 boot() 가 끼운다.
+    resolve 는 없는 이미지로 확인된 주소에 None 을 돌려준다."""
+    global _resolve
+    _resolve = resolve
+
+
+def image(url: str | None) -> str:
+    """화면에 넣을 이미지 주소 — 받아 둔 사본이 있으면 그 주소, 없는 이미지면 빈 문자열."""
+    return _resolve(url) or ""
+
+
 def photo(player: dict) -> str:
-    """액션 이미지. 바로 띄운 카드(확인 안 한 이미지)는 없을 때 얼굴 이미지가 대신 보이도록 <object> 로 감싼다."""
-    image, face, name = player.get("image") or "", player.get("face") or "", escape(player["name"])
-    if not image and not face:
+    """액션 이미지 → 없으면 얼굴 이미지. 받아 둔 사본이 있으면 그 주소로.
+    아직 받아 보지 않은 액션 이미지는 <object> 로 감싸, 없을 때 얼굴 이미지가 대신 보이게 한다."""
+    name = escape(player["name"])
+    action, face = _resolve(player.get("image")), _resolve(player.get("face"))
+    if not action and not face:
         return '<div style="font-size:64px;line-height:1">⚽</div>'
-    if player.get("lite") and face:
-        return (f'<object data="{escape(image)}" type="image/png" aria-label="{name}">'
+    if action and face and action != face and action.startswith("http"):
+        return (f'<object data="{escape(action)}" type="image/png" aria-label="{name}">'
                 f'<img src="{escape(face)}" alt="{name}"></object>')
-    return f'<img src="{escape(image or face)}" alt="{name}" loading="lazy">'
+    return f'<img src="{escape(action or face)}" alt="{name}" loading="lazy">'
+
+
+CARD_BG = "https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/new/card/{code}.png"   # 시즌별 카드 배경
+ACTION_HIGH = "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersActionHigh/p{spid}.png"
+POSITION_KIND = {**dict.fromkeys(("ST", "LS", "RS", "CF", "LF", "RF", "LW", "RW"), "fw"),
+                 **dict.fromkeys(("CAM", "LAM", "RAM", "CM", "LCM", "RCM", "CDM", "LDM", "RDM", "LM", "RM"), "mf"),
+                 **dict.fromkeys(("CB", "LCB", "RCB", "SW", "LB", "RB", "LWB", "RWB"), "df"), "GK": "gk"}
+SUMMARY = ("스피드", "슛", "패스", "드리블", "수비", "피지컬")
+
+
+def season_code(season_img: str | None) -> str:
+    """'.../new/season/ICONTM.png' → 'ICONTM'."""
+    return (season_img or "").rsplit("/", 1)[-1].split(".")[0]
+
+
+def grade_tier(grade: int) -> str:
+    """강화 색 묶음 — 1 회색(g1) · 2~4 동(g2) · 5~7 은(g5) · 8~10 금(g8) · 11~13 백금(g11)."""
+    return "g11" if grade >= 11 else "g8" if grade >= 8 else "g5" if grade >= 5 else "g2" if grade >= 2 else "g1"
+
+
+def grade_badge(grade: int | None) -> str:
+    g = grade or 1
+    return f'<span class="fc-grade {grade_tier(g)}">+{g}강</span>'
+
+
+def position_badge(position: str | None) -> str:
+    return f'<span class="fc-pos {POSITION_KIND.get(position or "", "mf")}">{escape(position)}</span>' if position else ""
+
+
+def card_visual(player: dict, ovr: int | None = None, position: str | None = None, grade: int | None = None,
+                high: bool = False, pay: int | None = None, inner: str = "", exact: bool = True) -> str:
+    """시즌 카드 배경 위에 선수 — 왼쪽 위에 OVR · 포지션(· 급여), 오른쪽 위에 강화. 배경 · 선수 이미지는 받아 둔 사본으로.
+    inner 는 카드 안에 더 얹을 것 (경기장 카드의 특성 · 강화 · 이름)."""
+    code = season_code(player.get("season_img"))
+    bg_url = CARD_BG.format(code=code) if code else None
+    bg = image(bg_url) if code else ""
+    frame = _frame(bg_url) if bg else None
+    figure = photo(player)
+    if high and player.get("spid"):
+        sharp = image(ACTION_HIGH.format(spid=player["spid"]))
+        if sharp and not sharp.startswith("http"):   # 받아 둔 고화질 이미지가 있을 때만 (없는 카드도 많다)
+            figure = f'<img src="{escape(sharp)}" alt="{escape(player["name"])}">'
+    overlay = ""
+    if ovr:
+        kind = POSITION_KIND.get(position or "", "mf")
+        overlay = (f'<div class="ov"><b>{ovr}{"" if exact else "<small>*</small>"}</b>'
+                   + (f'<span class="{kind}">{escape(position)}</span>' if position else "")
+                   + (f'<i class="fc-pay" title="급여">{pay}</i>' if pay is not None else "") + "</div>")
+    if grade:
+        overlay += f'<div class="gr">{grade_badge(grade)}</div>'
+    box = ""
+    if frame:
+        x0, y0, w, h = frame["box"]
+        box = f";--x0:{x0:.3f};--y0:{y0:.3f};--w:{w:.3f};--h:{h:.3f}"
+    style = f' style="background-image:url({escape(bg)}){box}"' if bg else ""
+    kind = "" if bg else " nobg"
+    kind += " light" if frame and frame["light"] else ""
+    return f'<div class="fc-cv{kind}"{style}><div class="fig">{figure}</div>{overlay}{inner}</div>'
+
+
+def bp_short(value: int | None) -> str:
+    """시세를 짧게 — 21.3억 · 9,720만 · 4,500 (경기장 카드 밑)."""
+    if value is None:
+        return "-"
+    if value >= 10**8:
+        eok = value / 10**8
+        return f"{eok:,.0f}억" if eok >= 100 else f"{eok:.1f}".rstrip("0").rstrip(".") + "억"
+    if value >= 10**4:
+        return f"{value / 10**4:,.0f}만"
+    return f"{value:,}"
+
+
+def pitch_card(player: dict, code: str, ovr: int | None, exact: bool = True, grade: int | None = None,
+               pay: int | None = None, trait: dict | None = None, flag: str = "", price: str = "") -> str:
+    """경기장 자리의 선수 카드 (공식 스쿼드 메이커처럼) — 시즌 카드 위에 그 자리 OVR · 포지션 · 급여, 오른쪽 위 보유 신규 특성,
+    왼쪽 아래 강화, 아래 국기 · 이름. 카드 밑에 시세 · 구단 가치 중 비율. trait = {name, icon}."""
+    g = grade or 1
+    tier = grade_tier(g)
+    flag_html = f'<img src="{escape(image(flag))}" alt="">' if flag and image(flag) else ""
+    inner = (f'<img class="tr" src="{escape(image(trait["icon"]))}" alt="" title="보유 신규 특성: {escape(trait["name"])}">'
+             if trait else "")
+    inner += (f'<div class="lc"><i class="gd {tier}">{g}</i></div><div class="nm">{escape(player["name"])}</div>'
+              + (f'<div class="fl">{flag_html}</div>' if flag_html else ""))
+    return (f'<div class="pc">{card_visual(player, ovr, code, pay=pay, inner=inner, exact=exact)}'
+            f'<div class="price">{price}</div></div>')
+
+
+def foot_text(foot: dict | None) -> str:
+    """{"L": 5, "R": 3, "main": "L"} → 'L5 – R3' (주발은 굵게)."""
+    if not foot:
+        return ""
+
+    def side(k: str) -> str:
+        return f"<b>{k}{foot[k]}</b>" if foot.get("main") == k else f"{k}{foot[k]}"
+
+    return f'<span class="foot">{side("L")} – {side("R")}</span>'
+
+
+def card_row(player: dict, info: dict | None = None, *, grade: int | None = None, ovr: int | None = None,
+             position: str | None = None, pay: int | None = None, foot: dict | None = None,
+             crests: list[tuple[str, str]] = (), exact: bool = True, note: str = "", ovr_label: str = "",
+             wait_text: str = "국적 · 팀컬러 불러오는 중…") -> str:
+    """선수 줄 (공식 스쿼드 메이커의 선수 목록처럼) — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 / 시즌 이름 · 주발 /
+    국적 · 팀컬러 / 요약 능력치(강화 반영) / 특성 · OVR. info(카드 상세)가 아직 없으면 그 칸은 '불러오는 중'."""
+    info = info or {}
+    grade = grade or 1
+    position = position or info.get("position") or ""
+    pay = pay if pay is not None else info.get("pay")
+    season_icon = image(player.get("season_img"))
+    l1 = (position_badge(position) + (f'<img class="ssn" src="{escape(season_icon)}" alt="">' if season_icon else "")
+          + f'<span class="nm">{escape(player["name"])}</span>'
+          + (f'<span class="fc-pay" title="급여">{pay}</span>' if pay is not None else "") + grade_badge(grade))
+    foot_html = foot_text(foot or info.get("foot_lr"))
+    l2 = escape(player.get("season", "")) + (f"<i>·</i>{foot_html}" if foot_html else "")
+    icons = "".join(f'<img src="{escape(image(url))}" alt="" title="{escape(name)}">' for name, url in crests if image(url))
+    l3 = icons or (f'<span class="wait">{escape(wait_text)}</span>' if not info and wait_text else "")
+    summary = info.get("summary") or {}
+    bonus = GRADE_OVR[grade]
+    l4 = " · ".join(f"{k} <b>{v + bonus}</b>" for k, v in summary.items() if k in SUMMARY)
+    traits = info.get("traits") or []
+    trait_html = "".join(f'<img class="{"new" if t["new"] else ""}" src="{escape(image(t["icon"]))}" alt="{escape(t["name"])}" '
+                         f'title="{escape(t["name"])}{" (신규 특성)" if t["new"] else ""}">' for t in traits[:5])
+    if len(traits) > 5:
+        trait_html += f"<small>+{len(traits) - 5}</small>"
+    shown = "-" if ovr is None else f"{ovr}{'' if exact else '*'}"
+    label = f"<small>{escape(ovr_label)}</small>" if ovr_label else ""
+    return (f'<div class="fc-prow"><div>{card_visual(player)}</div><div>'
+            f'<div class="l1">{l1}</div><div class="l2">{l2}</div><div class="l3">{l3}</div>'
+            + (f'<div class="l4">{l4}</div>' if l4 else "") + (f'<div class="note">{escape(note)}</div>' if note else "")
+            + f'</div><div class="side"><div class="traits">{trait_html}</div><div class="ovr">{shown}{label}</div></div></div>')
+
+
+def _tier(value: int) -> str:
+    return "v4" if value >= 130 else "v3" if value >= 115 else "v2" if value >= 100 else "v1" if value >= 80 else ""
+
+
+def _up(value: int, base: int | None) -> str:
+    return f'<small class="up">+{value - base}</small>' if base is not None and value > base else ""
+
+
+def ovr_grid(position_ovr: dict[str, int], order: tuple[str, ...], bonus: int = 0, base: dict[str, int] | None = None) -> str:
+    """포지션별 OVR 16칸 (데이터센터 선수 정보 화면 순서) — bonus 를 더해 보이고, base(+1 기본값)보다 오른 만큼을 작게.
+    가장 높은 포지션은 테두리."""
+    if not position_ovr:
+        return '<div class="fc-note">포지션별 OVR 을 아직 받지 못했습니다.</div>'
+    best = max(position_ovr.values())
+    cells = "".join(
+        f'<div class="{"best" if position_ovr.get(pos) == best else ""}"><span class="fc-pos {POSITION_KIND.get(pos, "mf")}" '
+        f'style="border:none;padding:0">{pos}</span><b>{position_ovr[pos] + bonus}</b>'
+        f'{_up(position_ovr[pos] + bonus, (base or {}).get(pos))}</div>'
+        if pos in position_ovr else '<div class="empty"></div>' for pos in order)
+    return f'<div class="fc-ovrgrid">{cells}</div>'
+
+
+def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0, base: dict[str, int] | None = None) -> str:
+    """세부 능력치 34개를 묶음별로 (요약 값과 함께) — bonus 를 모든 능력치에 더하고, base(+1 기본값)보다 오른 만큼을 작게."""
+    parts = []
+    for group, names in ABILITY_GROUPS.items():
+        head = f" <b>{summary[group] + bonus}</b>" if group in summary else ""
+        parts.append(f'<div class="grp">{group}{head}</div>')
+        for name in names:
+            if name in stats:
+                value = stats[name] + bonus
+                parts.append(f'<div class="it">{escape(name)}<span><b class="{_tier(value)}">{value}</b>'
+                             f'{_up(value, (base or {}).get(name))}</span></div>')
+    return f'<div class="fc-abil">{"".join(parts)}</div>'
+
+
+def trait_chips(traits: list[dict]) -> str:
+    if not traits:
+        return '<span class="fc-trait muted">특성 없음</span>'
+    return '<div class="fc-chipwrap">' + "".join(
+        f'<span class="fc-trait{" new" if t["new"] else ""}" title="{"신규 특성" if t["new"] else "일반 특성"}">'
+        f'<img src="{escape(image(t["icon"]))}" alt="">{escape(t["name"])}{"<b>NEW</b>" if t["new"] else ""}</span>'
+        for t in sorted(traits, key=lambda t: not t["new"])) + "</div>"
+
+
+def club_history(clubs: list[dict]) -> str:
+    if not clubs:
+        return '<div class="fc-note">클럽 경력 정보가 없습니다.</div>'
+    rows = "".join(f'<div class="it"><span>{escape(c["years"])}</span><b>{escape(c["club"])}'
+                   f'{" <small>(임대)</small>" if c.get("loan") else ""}</b></div>' for c in clubs)
+    return f'<div class="fc-abil" style="grid-template-columns:1fr">{rows}</div>'
+
+
+def teamcolor_list(items: list[tuple[str, str, str]]) -> str:
+    """[(그룹, 이름, 엠블럼 주소)] → 엠블럼 칩."""
+    if not items:
+        return '<div class="fc-note">들어가는 팀컬러가 없습니다.</div>'
+    return '<div class="fc-chipwrap">' + "".join(
+        f'<span class="fc-trait" title="{escape(group)} 팀컬러">'
+        + (f'<img src="{escape(image(icon))}" alt="">' if icon and image(icon) else '<i class="noimg"></i>')
+        + f'{escape(name)}<small style="margin-left:4px;opacity:.7">{escape(group)}</small></span>'
+        for group, name, icon in items) + "</div>"
 
 
 def _season(player: dict) -> str:
-    icon = f'<img src="{escape(player["season_img"])}" alt="">' if player.get("season_img") else ""
-    return f'<div class="season">{icon}{escape(player["season_short"])}</div>'
+    icon = image(player.get("season_img"))
+    icon_html = f'<img src="{escape(icon)}" alt="">' if icon else ""
+    return f'<div class="season">{icon_html}{escape(player["season_short"])}</div>'
 
 
 # ── 타일 · 카드 ─────────────────────────────────────────────────
 
-def tile(player: dict, rank: int | None = None, kpi: str | None = None, badge: str = "", note: str = "") -> str:
-    """카드 타일. badge(예: 랭킹 순위)와 note(예: AI 추천 이유)는 카드 안 아래쪽에 — 카드 밖으로 넘치거나 겹치지 않게."""
+def tile(player: dict, rank: int | None = None, kpi: str | None = None, badge: str = "", note: str = "",
+         ovr: int | None = None, position: str | None = None, pay: int | None = None, foot: dict | None = None) -> str:
+    """카드 타일 — 시즌 카드 그림(OVR · 포지션) · 이름 · 급여 · 주발/약발. badge(예: 랭킹 순위)와 note(예: AI 추천 이유)는
+    카드 안 아래쪽에."""
     icon = " icon" if "ICON" in player.get("season", "") else ""
     if kpi is None:   # 포지션에 맞는 대표 스탯 (공격 골 · 도움 / 수비 태클 · 블록 / 골키퍼 선방률)
         kpi = key_stat_line(player) or ("랭커 기록 불러오기 전" if player.get("lite") else "랭커 기록 없음")
@@ -220,27 +702,33 @@ def tile(player: dict, rank: int | None = None, kpi: str | None = None, badge: s
     extra = (f'<div class="badge">{escape(badge)}</div>' if badge else "") + (f'<div class="why">{escape(note)}</div>' if note else "")
     return (
         f'<div class="fc-tile{icon}">{_season(player)}{rank_html}'
-        f'<div class="ph">{photo(player)}</div>'
-        f'<div class="nm">{escape(player["name"])}</div>'
+        f'<div class="cvw">{card_visual(player, ovr, position)}</div>'
+        f'<div class="nm">{escape(player["name"])}</div>{_tile_meta(pay, foot)}'
         f'<div class="sub">{escape(sub)}</div><div class="kpi">{kpi}</div>{extra}</div>'
     )
 
 
+def _tile_meta(pay: int | None, foot: dict | None) -> str:
+    """타일의 급여(육각형) · 주발 – 약발 한 줄 — 아직 모르면 '…'."""
+    pay_html = f'<span class="fc-pay" title="급여">{pay}</span>' if pay is not None else '<span class="fc-pay wait">…</span>'
+    foot_html = foot_text(foot) if foot else '<span class="foot">L? – R?</span>'
+    return f'<div class="meta">{pay_html}{foot_html}</div>'
+
+
 def person_tile(name: str, pid: int, card_count: int) -> str:
     """선수 고르기용 작은 카드 — 얼굴 · 이름 · 카드 수."""
-    face = escape(f"https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/players/p{pid}.png")
+    face = escape(image(f"https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/players/p{pid}.png"))
     return (f'<div class="fc-tile fc-person"><div class="ph" style="height:72px;margin-top:4px">'
             f'<img src="{face}" alt="{escape(name)}" loading="lazy"></div>'
             f'<div class="nm">{escape(name)}</div><div class="sub">카드 {card_count}장</div></div>')
 
 
-def player_card(player: dict) -> str:
+def player_card(player: dict, ovr: int | None = None, position: str | None = None) -> str:
+    """큰 선수 카드 — 시즌 카드 배경 위에 선수(고화질 이미지가 있으면 그것) · OVR · 포지션, 아래에 이름 · 시즌."""
     icon = " icon" if "ICON" in player.get("season", "") else ""
-    pos = player["positions"][0] if player.get("positions") else ""
-    pos_html = f'<div class="pos">{escape(pos)}</div>' if pos else ""
     return (
-        f'<div class="fc-card{icon}">{_season(player)}{pos_html}'
-        f'<div class="ph">{photo(player)}</div>'
+        f'<div class="fc-card{icon}">{_season(player)}'
+        f'<div class="cvbig">{card_visual(player, ovr, position, high=True)}</div>'
         f'<div class="name">{escape(player["name"])}</div>'
         f'<div class="sub">{escape(player.get("season", ""))}</div></div>'
     )
@@ -253,6 +741,21 @@ def chips(items: list[tuple[str, str]]) -> str:
 
 def ai_box(text_html: str, tag: str = "AI 스카우팅") -> str:
     return f'<div class="fc-ai"><span class="tag">🤖 {escape(tag)}</span>{text_html}</div>'
+
+
+INTRO_FOLD = 300   # 소개가 이 글자 수보다 길면 다섯 줄쯤에서 접는다
+
+
+def intro_card(player: dict) -> str:
+    """위키백과 소개 카드. 길면 접어 두고 '더 보기'로 펼친다 — 버튼(다시 실행) 없이 브라우저에서 바로."""
+    paragraphs = "".join(f"<p>{escape(line.strip())}</p>" for line in player["intro"].splitlines() if line.strip())
+    folded = len(player["intro"]) > INTRO_FOLD
+    more = ('<details><summary><span class="more">더 보기 ▾</span><span class="less">접기 ▴</span></summary></details>'
+            if folded else "")
+    return (f'<div class="fc-panel fc-intro{" folded" if folded else ""}">'
+            f'<div class="title">선수 소개<small>한국어 위키백과</small></div><div class="body">{paragraphs}</div>{more}'
+            f'<div class="fc-note">출처: <a href="{escape(player["wiki_url"])}" target="_blank">위키백과 — '
+            f'{escape(player["wiki_title"])}</a> (CC BY-SA 4.0)</div></div>')
 
 
 # ── 스탯 막대 (포지션 내 백분위) ──────────────────────────────────
@@ -351,46 +854,6 @@ def compare_chart(a: dict, b: dict, maxima: dict[str, float], theme: str) -> str
 
 
 # ── 전술: 경기장 ────────────────────────────────────────────────
-
-def pitch(slots: list[str], squad: dict[str, dict | None], xy: dict[str, tuple[int, int]],
-          grades: dict[str, int] | None = None) -> str:
-    """포메이션 자리에 선수 얼굴 · 이름을 놓은 경기장. 빈 자리는 점선 원. grades 가 있으면 강화 등급(+n)도."""
-    marks = []
-    for slot in slots:
-        x, y = xy.get(slot, (50, 50))
-        p = squad.get(slot)
-        if p:
-            face = escape(p.get("face") or p.get("image") or "")
-            grade = f" +{grades[slot]}" if grades and grades.get(slot) else ""
-            body = (f'<img src="{face}" alt="{escape(p["name"])}">'
-                    f'<div class="pn">{escape(p["name"])}</div><div class="ps">{escape(slot)} · {escape(p["season_short"])}{grade}</div>')
-        else:
-            body = f'<div class="empty">{escape(slot)}</div><div class="ps">비어 있음</div>'
-        marks.append(f'<div class="slot" style="left:{x}%;top:{y}%">{body}</div>')
-    return f'<div class="fc-pitch"><div class="box top"></div><div class="box bottom"></div><div class="mid"></div><div class="circle"></div>{"".join(marks)}</div>'
-
-
-PITCH_CSS = """
-<style>
-.fc-pitch { position: relative; width: 100%; aspect-ratio: 0.78; border-radius: 18px; overflow: hidden;
-  background: repeating-linear-gradient(180deg, #0f5132 0 9%, #0d4a2d 9% 18%); border: 2px solid rgba(255,255,255,.18); }
-.fc-pitch .mid { position: absolute; left: 0; right: 0; top: 50%; border-top: 2px solid rgba(255,255,255,.25); }
-.fc-pitch .circle { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; transform: translate(-50%, -50%);
-  border: 2px solid rgba(255,255,255,.25); border-radius: 50%; }
-.fc-pitch .box { position: absolute; left: 25%; width: 50%; height: 14%; border: 2px solid rgba(255,255,255,.25); }
-.fc-pitch .box.top { top: -2px; border-top: none; }
-.fc-pitch .box.bottom { bottom: -2px; border-bottom: none; }
-.fc-pitch .slot { position: absolute; transform: translate(-50%, -50%); text-align: center; width: 92px; }
-.fc-pitch .slot img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; background: #0b1426;
-  border: 2px solid #16e08a; box-shadow: 0 4px 10px rgba(0,0,0,.4); }
-.fc-pitch .slot .empty { width: 48px; height: 48px; margin: 0 auto; border-radius: 50%; border: 2px dashed rgba(255,255,255,.45);
-  color: #dfe6f3; font-size: 11px; font-weight: 800; line-height: 44px; }
-.fc-pitch .pn { font-size: 12px; font-weight: 800; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fc-pitch .ps { font-size: 10px; color: #cfe9dc; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
-</style>
-"""
-
 
 # ── 전적 ───────────────────────────────────────────────────────
 

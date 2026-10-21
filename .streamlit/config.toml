@@ -6,8 +6,12 @@ primaryColor = "#16e08a"
 backgroundColor = "#0a0f1c"
 secondaryBackgroundColor = "#141c2e"
 textColor = "#e6ecf5"
-borderColor = "#25304a"
+borderColor = "#3a4c74"     # 입력칸 · 표 테두리 — 바탕과 구분되게 (#25304a 는 너무 어두워 눈에 안 띄었다)
+showWidgetBorder = true
 baseRadius = "medium"
+
+[server]
+enableStaticServing = true  # static/cache 에 받아 둔 선수 이미지를 app/static/... 로 내준다 (services/images.py)
 
 [client]
 showErrorDetails = "none"   # 트레이스백을 화면에 띄우지 않는다 (NF2004)

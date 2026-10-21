@@ -3,11 +3,39 @@
 from __future__ import annotations
 
 import re
+from html import escape
 
 import streamlit as st
 
 from data_prep.nexon_api import split_spid
 from views.common import Ctx, get_player
+
+# ── 강화 등급 고르기 ─────────────────────────────────────────────
+
+def grade_buttons(label: str, key: str, options=range(1, 14), on_change=None, args: tuple = ()) -> int:
+    """강화 등급을 버튼으로 (드롭다운 · 슬라이더 대신) — 등급마다 공식 색(1 회색 · 2~4 동 · 5~7 은 · 8~10 금 · 11~13 백금),
+    고른 등급은 흰 테두리. 값은 st.session_state[key] 에 두고 돌려준다. on_change(*args) 는 고를 때 한 번."""
+    import ui_parts   # 순환 import 를 피하려고 여기서
+
+    options = list(options)
+    if st.session_state.get(key) not in options:
+        st.session_state[key] = options[0]
+    value = st.session_state[key]
+
+    def choose(grade: int) -> None:
+        st.session_state[key] = grade
+        if on_change:
+            on_change(*args)
+
+    if label:
+        st.markdown(f'<div class="fc-gradelabel">{escape(label)}</div>', unsafe_allow_html=True)
+    with st.container(horizontal=True, gap="small", key=f"gradebox_{key}"):
+        for grade in options:
+            state = "on" if grade == value else "off"
+            with st.container(key=f"gbtn_{ui_parts.grade_tier(grade)}_{state}_{key}_{grade}", width="content"):
+                st.button(f"+{grade}", key=f"{key}__{grade}", on_click=choose, args=(grade,))
+    return value
+
 
 # ── 시즌 정렬 ───────────────────────────────────────────────────
 # 시즌 ID 는 출시 순서가 아니고 성격이 다른 묶음이 섞여 있다(1xx ICON · 2xx · 3xx/5xx 라이브 · 8xx).
@@ -125,7 +153,7 @@ def card_picker(ctx: Ctx, key: str, default_id: str | None = None, label: str = 
     cards = ctx.catalog.cards_of(pid)   # 이 선수의 시즌만
 
     def card_label(spid: int) -> str:
-        mark = " ✓분석" if str(spid) in ctx.by_id or ctx.db.get_player(str(spid)) else ""
+        mark = " ✓분석" if str(spid) in ctx.by_id else ""   # by_id 에 SQLite 에 저장된 카드까지 들어 있다
         return f"{season_name(ctx.catalog.season_name(spid))}{mark}"
 
     who_col, season_col, again_col = st.columns([1.4, 2.6, 1], vertical_alignment="bottom")

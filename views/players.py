@@ -9,7 +9,7 @@ from __future__ import annotations
 import streamlit as st
 
 from data_prep.players import POSITION_GROUPS, SAVE_MIN_SHOTS, SORT_LABELS, SORT_STATS, sort_value
-from views.common import Ctx, back_button, has_save_samples, search_players, tile_grid, with_saves
+from views.common import Ctx, back_button, card_ovrs, card_row_list, search_players, tile_grid, with_saves
 from views.widgets import season_select, semantic_players
 
 PAGE = 24
@@ -19,13 +19,41 @@ SAVE_NOTE = (f"골키퍼 선방률은 넥슨 랭커 API 에 없어, 🎮 내 기
 
 def sort_options(group: str | None) -> dict[str, str | None]:
     """포지션에 맞는 정렬만 — 예) 골키퍼: 선방률 · 랭커 경기 수 · 패스 성공률, 센터백: 태클 · 블록 · 패스."""
-    return ({"추천 (최신 시즌 · 대표 스탯)": None, "이름순": "name"}
+    return ({"OVR 높은 순": "ovr", "추천 (최신 시즌 · 대표 스탯)": None, "이름순": "name"}
             | {SORT_LABELS[key] if key == "save_rate" else f"랭커 {SORT_LABELS[key]}": key
                for key in SORT_STATS.get(group, SORT_STATS[None])})
 
 
+def _stats_note(ctx: Ctx) -> str:
+    """모든 카드의 능력치 · 급여 수집(services/stats.py) 진행 — 다 모으기 전에는 OVR 을 모르는 카드가 정렬 뒤쪽에 있다."""
+    status = ctx.stats.status()
+    if not status["cards"]:
+        return ""
+    done = f"{status['parts_done']}/{status['parts']}" if status["parts"] else "-"
+    doing = f" · {status['current']}" if status["running"] and status["current"] else ""
+    return f" · 능력치 DB {status['cards']:,}장 (시즌 {status['seasons']}개 · 능력치 다 모은 조각 {done}{doing})"
+
+
 def _reset_page() -> None:
     st.session_state.pl_page = 0
+
+
+def _rows(ctx: Ctx, shown: list[dict]) -> None:
+    """선수 줄 목록 — 카드 상세(특성 · 팀컬러 · 주발 · 요약 능력치)를 받는 동안에는 2초마다 이 목록만 다시 그린다."""
+    ctx.cards.want([p["spid"] for p in shown])
+    if ctx.cards.pending([p["spid"] for p in shown]):
+        _rows_live(ctx, shown)
+    else:
+        card_row_list(ctx, shown, key="pl")
+
+
+@st.fragment(run_every=2)
+def _rows_live(ctx: Ctx, shown: list[dict]) -> None:
+    waiting = card_row_list(ctx, shown, key="pl")
+    if waiting:
+        st.caption(f"⏳ 카드 상세(특성 · 팀컬러 · 주발 · 능력치)를 데이터센터에서 받는 중 — {waiting}장 남음")
+    else:
+        st.rerun()   # 다 받았다 — 한 번 전체를 다시 그려 멈춘 목록으로
 
 
 def render(ctx: Ctx) -> None:
@@ -36,10 +64,7 @@ def render(ctx: Ctx) -> None:
     chosen_group = None if chosen_group in (None, "전체") else chosen_group
     sorts = sort_options(chosen_group)
     if st.session_state.get("pl_sort") not in sorts:   # 포지션을 바꾸면 그 포지션의 정렬로
-        first = 2 if chosen_group else 0
-        if chosen_group == "골키퍼" and not has_save_samples(ctx):   # 선방 표본이 아직 없으면 랭커 경기 수로
-            first = 3
-        st.session_state.pl_sort = list(sorts)[first]
+        st.session_state.pl_sort = list(sorts)[3 if chosen_group else 0]   # 포지션을 고르면 그 포지션의 대표 스탯 순
     with st.container(key="wrap_plfilters"):
         back_col, n_col, s_col, k_col, o_col = st.columns([0.9, 2.2, 3.2, 1.3, 2], vertical_alignment="bottom")
         back_button("players", back_col)
@@ -48,12 +73,13 @@ def render(ctx: Ctx) -> None:
             season = season_select(ctx, key="pl_season")
         kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="pl_kind", on_change=_reset_page)
         sort = o_col.selectbox("정렬", list(sorts), key="pl_sort", on_change=_reset_page)
-    group = st.pills("포지션", ["전체"] + list(POSITION_GROUPS), default="전체", key="pl_group", on_change=_reset_page)
+    st.session_state.setdefault("pl_group", "전체")   # 기본값은 세션으로 — 뒤로 돌아올 때 되살린 값과 겹치지 않게
+    group = st.pills("포지션", ["전체"] + list(POSITION_GROUPS), key="pl_group", on_change=_reset_page)
     group = None if group in (None, "전체") else group
     if group == "골키퍼":
         st.caption(SAVE_NOTE)
     sort_key = sorts.get(sort)
-    needs_stats = bool(group) or (sort_key not in (None, "name")) or (kind not in (None, "전체"))
+    needs_stats = bool(group) or (sort_key not in (None, "name", "ovr")) or (kind not in (None, "전체"))
     st.session_state.pl_page = st.session_state.get("pl_page", 0)
 
     if needs_stats or not (name.strip() or season):
@@ -65,6 +91,9 @@ def render(ctx: Ctx) -> None:
         pool = with_saves(ctx, pool)
         if sort_key == "name":
             pool.sort(key=lambda p: (p["name"], -p["season_id"]))
+        elif sort_key == "ovr":
+            ovrs = card_ovrs(ctx, [p["spid"] for p in pool])
+            pool.sort(key=lambda p: (p["spid"] not in ovrs, -ovrs.get(p["spid"], 0), -p["season_id"]))
         elif sort_key:
             pool.sort(key=lambda p: -sort_value(p, sort_key))
         else:   # 추천: 최신 시즌 → 그 포지션의 대표 스탯
@@ -81,10 +110,17 @@ def render(ctx: Ctx) -> None:
     page = min(st.session_state.pl_page, pages - 1)
     shown = pool[page * PAGE : (page + 1) * PAGE]
     ctx.prefetcher.schedule([p["spid"] for p in shown if p.get("lite")])
-    st.caption(f"{source}에서 {total:,}장{' (600장까지)' if total >= 600 else ''} · {page + 1}/{pages} 페이지")
+    c_col, v_col = st.columns([4, 1.3], vertical_alignment="center")
+    c_col.caption(f"{source}에서 {total:,}장{' (600장까지)' if total >= 600 else ''} · {page + 1}/{pages} 페이지"
+                  f"{_stats_note(ctx)}")
+    st.session_state.setdefault("pl_view", "☰ 목록")
+    v_col.segmented_control("보기", ["☰ 목록", "🗂 카드"], key="pl_view", label_visibility="collapsed")
 
     if shown:
-        tile_grid(ctx, shown, key="pl")
+        if st.session_state.get("pl_view", "☰ 목록") == "🗂 카드":
+            tile_grid(ctx, shown, key="pl")
+        else:
+            _rows(ctx, shown)
     elif name.strip():
         similar = semantic_players(ctx, name.strip())
         if similar:

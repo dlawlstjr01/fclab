@@ -59,7 +59,8 @@ SORT_STATS = {
     "수비형 미드필더": ["tackle", "block", "pass_rate", "assist"],
     "풀백": ["tackle", "block", "assist", "pass_rate", "dribble_rate"],
     "센터백": ["tackle", "block", "pass_rate"],
-    "골키퍼": ["save_rate", "match_count", "pass_rate"],
+    # 랭커 경기 수가 먼저 — 선방률은 연결한 계정이 불러온 경기에서만 모여, 기본 정렬로 쓰면 그 경기에 나온 골키퍼만 앞에 선다
+    "골키퍼": ["match_count", "save_rate", "pass_rate"],
 }
 SORT_LABELS = {key: name for key, name, _ in STATS} | {"points": "공격 포인트(골+도움)", "match_count": "랭커 경기 수",
                                                        "save_rate": "선방률(경기 기록)"}

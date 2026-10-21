@@ -6,22 +6,24 @@ import streamlit as st
 
 from html import escape
 
-from data_prep.players import stat_values
-from services.explore import describe, explore_players
+from data_prep.players import player_label, stat_values
+from services.explore import describe, explore_players, suggest_conditions
 from views.common import Ctx, back_button, friendly_error, log, search_players, tile_grid
 from views.widgets import season_select, semantic_players
-
-EXAMPLES = ["대한민국 출신 공격수", "프리미어리그 레전드 미드필더", "랭커가 골을 많이 넣는 윙어",
-            "태클이 좋은 수비형 미드필더", "스페인 출신 센터백"]
 
 
 def _run_ai_search(ctx: Ctx, condition: str) -> None:
     try:
-        st.session_state.explore_results = {"condition": condition,
-                                            "items": explore_players(condition, ctx.store, ctx.model, ctx.by_id, ctx.settings)}
+        found = explore_players(condition, ctx.store, ctx.model, ctx.by_id, ctx.settings)
+        st.session_state.explore_results = {"condition": condition, **found}
+        ctx.db.log_search(condition)
     except Exception as exc:  # noqa: BLE001
         log.exception("AI 검색 실패")
         st.error(friendly_error(exc))
+
+
+def _shuffle_chips(ctx: Ctx) -> None:
+    st.session_state.chips = suggest_conditions(ctx.db.search_counts())
 
 
 def _use_example(text: str) -> None:
@@ -39,12 +41,14 @@ def _clear() -> None:
 def render(ctx: Ctx) -> None:
     analyzed = sum(1 for p in ctx.players if p.get("ranker"))
     dates = [p["ranker"]["date"] for p in ctx.players if p.get("ranker")]
+    new_cards = ctx.db.new_cards(days=7)
     st.markdown(
         '<div class="fc-hero"><h1>FC 온라인 선수, <b>한 번에</b> 찾고 비교하세요</h1>'
         "<p>랭커 실전 기록 · 실제 커리어 · AI 분석을 근거와 함께. 이름으로 찾거나, 원하는 선수를 말로 설명해 보세요.</p>"
         f'<div class="stats"><div><b>{len(ctx.catalog.cards):,}</b>전체 카드</div>'
         f'<div><b>{len(ctx.catalog.by_pid):,}</b>선수</div><div><b>{analyzed:,}</b>랭커 분석 카드</div>'
-        f'<div><b>{max(dates) if dates else "-"}</b>랭커 집계일</div></div></div>',
+        f'<div><b>{max(dates) if dates else "-"}</b>랭커 집계일</div>'
+        + (f'<div><b>+{new_cards:,}</b>최근 7일 새 카드</div>' if new_cards else "") + "</div></div>",
         unsafe_allow_html=True,
     )
 
@@ -60,9 +64,15 @@ def render(ctx: Ctx) -> None:
     clear_col.button("✕ 지우기", key="q_clear", on_click=_clear, width="stretch", disabled=not searching,
                      help="검색을 지우고 첫 화면으로")
 
-    for col, example in zip(st.container(key="wrap_chips").columns(len(EXAMPLES)), EXAMPLES):
+    if "chips" not in st.session_state:   # 자주 찾는 조건 중 무작위 — 들어올 때마다 바뀌고, 🔀 로 다시 뽑는다
+        _shuffle_chips(ctx)
+    chip_cols = st.container(key="wrap_chips").columns([1] * len(st.session_state.chips) + [0.32],
+                                                       vertical_alignment="center")
+    for col, example in zip(chip_cols, st.session_state.chips):
         col.button(f"💡 {example}", key=f"chip_{example}", on_click=_use_example, args=(example,), width="stretch",
                    type="tertiary")
+    chip_cols[-1].button("🔀", key="chip_shuffle", on_click=_shuffle_chips, args=(ctx,), type="tertiary",
+                         help="다른 추천 검색어", width="stretch")
 
     pending = st.session_state.pop("pending_ai", None)
     if (ai_clicked and query.strip()) or pending:
@@ -76,13 +86,18 @@ def render(ctx: Ctx) -> None:
         items = [i for i in found["items"] if i["player_id"] in ctx.by_id]
         st.markdown(f'<div class="fc-section">🤖 AI 추천 — "{escape(found["condition"])}"<small>{len(items)}명</small></div>',
                     unsafe_allow_html=True)
-        st.caption(describe(found["condition"], ctx.players))
+        st.caption(describe(found["condition"], ctx.players, found))
         if items:
             tile_grid(ctx, [ctx.by_id[i["player_id"]] for i in items], key="ai", ranked=True,
                       reasons={i["player_id"]: i["reason"] for i in items},
                       badges={i["player_id"]: i.get("rank", "").replace("파워 랭킹 ", "") for i in items})
         else:
             st.info("조건에 맞는 선수를 찾지 못했습니다. 조건을 바꿔 보세요.")
+        excluded = [e for e in found.get("excluded", []) if e["player_id"] in ctx.by_id]
+        if excluded:
+            with st.expander(f"AI가 제외한 후보 {len(excluded)}장 — 왜 빠졌는지"):
+                st.markdown("\n".join(f"- **{escape(player_label(ctx.by_id[e['player_id']]))}** — {escape(e['reason'])}"
+                                      for e in excluded))
 
     # 이름 · 시즌 검색 — 입력하는 즉시 (네트워크 없이). 보이는 카드는 백그라운드로 미리 분석해 둔다.
     results = search_players(ctx, query, season) if (query.strip() or season) else []

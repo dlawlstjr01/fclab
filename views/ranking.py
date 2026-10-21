@@ -9,9 +9,10 @@ from html import escape
 
 import streamlit as st
 
+import ui_parts
 from data_prep.players import POSITION_GROUPS, SORT_LABELS, SORT_STATS, STATS
 from services.insights import leaderboard
-from views.common import Ctx, has_save_samples, open_player, tile_grid, with_saves
+from views.common import Ctx, open_player, tile_grid, with_saves
 from views.players import SAVE_NOTE
 
 
@@ -30,30 +31,32 @@ def render(ctx: Ctx) -> None:
     def first_page() -> None:
         st.session_state.rank_page = 0
 
-    group = g_col.pills("포지션", ["전체"] + list(POSITION_GROUPS), default="전체", key="rank_group", on_change=first_page)
+    st.session_state.setdefault("rank_group", "전체")   # 기본값은 세션으로 — 뒤로 돌아올 때 되살린 값과 겹치지 않게
+    group = g_col.pills("포지션", ["전체"] + list(POSITION_GROUPS), key="rank_group", on_change=first_page)
     group = None if group in (None, "전체") else group
     kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="rank_kind", on_change=first_page)
     names = {SORT_LABELS[k]: k for k in SORT_STATS.get(group, SORT_STATS[None])}   # 포지션에 맞는 정렬만
     if st.session_state.get("rank_sort") not in names:
-        keys = list(names)
-        # 골키퍼 선방 표본이 아직 없으면 랭커 경기 수로 시작 (빈 순위표를 먼저 보이지 않게)
-        st.session_state.rank_sort = keys[1] if names[keys[0]] == "save_rate" and not has_save_samples(ctx) else keys[0]
+        st.session_state.rank_sort = next(iter(names))
     sort_name = s_col.selectbox("정렬 기준", list(names), key="rank_sort", on_change=first_page)
-    min_matches = m_col.number_input("최소 경기 수", 1, 20, 10, key="rank_min", on_change=first_page,
-                                     help="랭커 경기 수가 적은 카드는 평균이 흔들린다 (선방률 순위는 상대 유효슈팅 수로 거른다)")
+    st.session_state.setdefault("rank_min", 10)
+    min_matches = m_col.number_input("최소 경기 수 (1~20)", min_value=1, max_value=20, key="rank_min", on_change=first_page,
+                                     help="랭커 기록은 카드마다 최근 최대 20경기라 20까지 고를 수 있습니다. "
+                                          "경기 수가 적은 카드는 평균이 흔들립니다.")
     if group == "골키퍼":
         st.caption(SAVE_NOTE)
 
     key = names[sort_name]
     rows = leaderboard(with_saves(ctx, ctx.players), group, kind or "전체", key, min_matches)
     if not rows:
-        st.info("아직 선방률을 낼 만큼 경기 기록이 모인 골키퍼가 없습니다. 🎮 내 기록에서 경기를 분석하면 양 팀 골키퍼 기록이 쌓입니다."
-                if key == "save_rate" else "조건에 맞는 카드가 없습니다. 최소 경기 수를 낮춰 보세요.")
+        st.info("조건에 맞는 카드가 없습니다. 최소 경기 수를 낮춰 보세요.")
         return
 
     st.markdown(f'<div class="fc-section">🥇 TOP 3 — {sort_name}</div>', unsafe_allow_html=True)
 
-    def shown(value: float) -> str:
+    def shown(value: float | None) -> str:
+        if value is None:   # 선방 표본이 없는 골키퍼
+            return "기록 부족"
         if key.endswith("_rate"):
             return f"{value:.0f}%"
         return f"{value:.0f}경기" if key == "match_count" else f"{value:.2f}"
@@ -78,7 +81,8 @@ def render(ctx: Ctx) -> None:
             )
         line, btn = st.columns([6, 1], vertical_alignment="center")
         line.markdown(
-            f'<div class="fc-line"><div class="rk">{rank}</div><img src="{escape(p.get("face") or p.get("image") or "")}" alt="">'
+            f'<div class="fc-line"><div class="rk">{rank}</div>'
+            f'<img src="{escape(ui_parts.image(p.get("face")) or ui_parts.image(p.get("image")))}" alt="">'
             f'<div><div class="nm">{escape(p["name"])} <span class="sb">{escape(p["season_short"])} · '
             f'{escape(", ".join(p["positions"]))} · {p["ranker"]["match_count"]}경기</span></div>'
             f'<div class="st">{stats}</div></div></div>', unsafe_allow_html=True)

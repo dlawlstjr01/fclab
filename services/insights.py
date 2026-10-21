@@ -47,15 +47,17 @@ def position_usage(rows: list[dict]) -> list[dict]:
 def leaderboard(players: list[dict], group: str | None, kind: str, sort_key: str, min_matches: int = 5) -> list[dict]:
     """포지션 그룹 · 구분(현역/레전드)으로 거르고, 랭커 스탯 하나로 줄 세운다.
 
-    선방률로 줄 세울 때는 선방 표본(상대 유효슈팅)이 충분한 골키퍼만 — 랭커 최소 경기 수 대신 그 기준을 쓴다.
+    선방률로 줄 세울 때는 선방 표본(상대 유효슈팅)이 충분한 골키퍼를 앞에, 표본이 없는 골키퍼는 랭커 경기 수 순으로 뒤에 둔다.
+    선방 표본은 연결한 계정이 불러온 경기에서만 모여서, 표본이 있는 골키퍼만 남기면 그 경기에 나온 골키퍼만 보이게 된다.
+    선방 표본이 있는 골키퍼는 랭커 최소 경기 수와 상관없이 넣는다.
     """
     rows = []
     for p in players:
         values = stat_values(p.get("ranker"))
         saves = save_rate(p)
-        if not values or (sort_key == "save_rate" and saves is None):
+        if not values:
             continue
-        if sort_key != "save_rate" and p["ranker"]["match_count"] < min_matches:
+        if p["ranker"]["match_count"] < min_matches and not (sort_key == "save_rate" and saves is not None):
             continue
         if group and p.get("position_group") != group:
             continue
@@ -64,7 +66,10 @@ def leaderboard(players: list[dict], group: str | None, kind: str, sort_key: str
             continue
         rows.append({"player": p, **values, "points": values["goal"] + values["assist"],
                      "match_count": p["ranker"]["match_count"], "save_rate": saves})
-    rows.sort(key=lambda r: -r[sort_key])
+    if sort_key == "save_rate":
+        rows.sort(key=lambda r: (r["save_rate"] is None, -(r["save_rate"] or 0), -r["match_count"]))
+    else:
+        rows.sort(key=lambda r: -r[sort_key])
     return rows
 
 

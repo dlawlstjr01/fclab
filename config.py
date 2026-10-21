@@ -50,6 +50,11 @@ class Settings:
     market_interval: float = 1.2
     market_ttl_hours: float = 6
     market_catch_up: int = 60
+    market_current_ttl_minutes: float = 30
+    market_refresh_minutes: float = 60
+    stats_enabled: bool = True
+    stats_interval: float = 1.5
+    stats_refresh_days: float = 7
 
     @property
     def items_path(self) -> Path:
@@ -112,6 +117,11 @@ def load_settings(path: str | Path | None = None, **overrides) -> Settings:
         "market_interval": float(raw.get("market", {}).get("interval", 1.2)),
         "market_ttl_hours": float(raw.get("market", {}).get("ttl_hours", 6)),
         "market_catch_up": int(raw.get("market", {}).get("catch_up", 60)),
+        "market_current_ttl_minutes": float(raw.get("market", {}).get("current_ttl_minutes", 30)),
+        "market_refresh_minutes": float(raw.get("market", {}).get("refresh_minutes", 60)),
+        "stats_enabled": bool(raw.get("stats", {}).get("enabled", True)),
+        "stats_interval": float(raw.get("stats", {}).get("interval", 1.5)),
+        "stats_refresh_days": float(raw.get("stats", {}).get("refresh_days", 7)),
     }
     values.update(overrides)
     settings = Settings(**values)

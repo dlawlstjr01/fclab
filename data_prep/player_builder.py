@@ -8,15 +8,20 @@ from __future__ import annotations
 import collections
 import difflib
 import json
+import logging
 import re
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from data_prep.nexon_api import ACTION_IMAGE, FACE_IMAGE, NexonClient, split_spid
 from data_prep.players import GROUP_OF, POSITION_GROUPS, season_short
 
+log = logging.getLogger("fclab.catalog")
+
 RECENT_DAYS = 45   # 이보다 오래된 랭커 집계는 '지금 쓰이는 포지션' 판단에서 뺀다
 INTRO_CHARS = 4000   # 위키백과 첫 문단을 자르지 않고 담는다 (화면에 전부 보여 준다)
+META_NAMES = ("spid", "seasonid", "spposition", "division")
 
 
 def _norm(text: str) -> str:
@@ -26,20 +31,63 @@ def _norm(text: str) -> str:
 # ── 넥슨: 카드 목록 · 랭커 스탯 ───────────────────────────────────
 
 class CardCatalog:
-    """FC 온라인 전체 카드(spid) · 시즌 · 포지션 · 등급 메타데이터. cache_dir 가 있으면 디스크 사본을 쓴다."""
+    """FC 온라인 전체 카드(spid) · 시즌 · 포지션 · 등급 메타데이터.
 
-    def __init__(self, nexon: NexonClient, cache_dir: Path | None = None):
-        self.nexon = nexon
-        self.cards = nexon.meta("spid", cache_dir)
-        self.seasons = {s["seasonId"]: s for s in nexon.meta("seasonid", cache_dir)}
-        self.position_names = {p["spposition"]: p["desc"] for p in nexon.meta("spposition", cache_dir) if p["desc"] != "SUB"}
-        self.divisions = {d["divisionId"]: d["divisionName"] for d in nexon.meta("division", cache_dir)}
-        self.cards_per_pid = collections.Counter(split_spid(c["id"])[1] for c in self.cards)
-        self.by_spid = {c["id"]: c for c in self.cards}
-        self.by_pid = collections.defaultdict(list)
-        for c in self.cards:
-            self.by_pid[split_spid(c["id"])[1]].append(c["id"])
-        self._names = [(_norm(c["name"]), c) for c in self.cards]   # 검색 때마다 정규화하지 않도록 미리
+    db 가 있으면 SQLite 에 둔 목록을 바로 읽는다 — 앱이 켜질 때 6.5MB 내려받기를 기다리지 않는다.
+    refresh_in_background() 가 하루 지난 목록을 뒤에서 새로 받아, 새로 나온 카드를 '처음 본 날'과 함께 DB 에 더한다.
+    db 가 없으면 cache_dir 의 디스크 사본(하루)을 쓴다.
+    """
+
+    def __init__(self, nexon: NexonClient, cache_dir: Path | None = None, db=None):
+        self.nexon, self.cache_dir, self.db = nexon, cache_dir, db
+        stored = db.catalog() if db else None
+        if stored:
+            meta, self.fetched_at = stored, stored["fetched_at"]
+        else:
+            meta = {name: nexon.meta(name, cache_dir) for name in META_NAMES}
+            self.fetched_at = datetime.now().isoformat(timespec="seconds")
+            if db:
+                db.put_catalog(meta)
+        self._build(meta)
+        self._refreshing = False
+
+    def _build(self, meta: dict) -> None:
+        """색인을 다 만든 뒤 한꺼번에 바꿔 끼운다 — 뒤에서 새로 받는 동안에도 화면은 앞 목록을 그대로 쓴다."""
+        cards = meta["spid"]
+        by_pid = collections.defaultdict(list)
+        for c in cards:
+            by_pid[split_spid(c["id"])[1]].append(c["id"])
+        self.seasons = {s["seasonId"]: s for s in meta["seasonid"]}
+        self.position_names = {p["spposition"]: p["desc"] for p in meta["spposition"] if p["desc"] != "SUB"}
+        self.divisions = {d["divisionId"]: d["divisionName"] for d in meta["division"]}
+        self.cards_per_pid = collections.Counter(split_spid(c["id"])[1] for c in cards)
+        self.by_spid = {c["id"]: c for c in cards}
+        self.by_pid = by_pid
+        self._names = [(_norm(c["name"]), c) for c in cards]   # 검색 때마다 정규화하지 않도록 미리
+        self.cards = cards
+
+    def refresh_in_background(self, max_age_hours: float = 24) -> None:
+        """목록이 하루 지났으면 뒤에서 새로 받는다 — 새로 나온 카드는 DB 에 더하고 이 목록에도 바로 반영한다."""
+        if not self.db or self._refreshing:
+            return
+        if datetime.now() - datetime.fromisoformat(self.fetched_at) < timedelta(hours=max_age_hours):
+            return
+        self._refreshing = True
+
+        def run() -> None:
+            try:
+                meta = {name: self.nexon.meta(name, self.cache_dir, max_age_hours=0) for name in META_NAMES}
+                new = self.db.put_catalog(meta)
+                self._build(meta)
+                self.fetched_at = datetime.now().isoformat(timespec="seconds")
+                if new:
+                    log.info("새로 나온 카드 %d장을 목록에 더했습니다", len(new))
+            except Exception as exc:  # noqa: BLE001 — 못 받으면 지금 목록으로 계속, 다음에 다시
+                log.warning("카드 목록 새로 받기 실패: %s", exc)
+            finally:
+                self._refreshing = False
+
+        threading.Thread(target=run, name="catalog-refresh", daemon=True).start()
 
     def cards_of(self, pid: int) -> list[int]:
         """한 선수의 모든 카드 spid — 최신 시즌(시즌 ID 가 큰 것)부터."""

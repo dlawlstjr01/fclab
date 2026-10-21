@@ -26,6 +26,7 @@ blocks = [
     ("조건 탐색 선별 (F2011)", prompts.EXPLORE_SYSTEM),
     ("AI 한줄 스카우팅 (F2010)", prompts.SCOUT_SYSTEM),
     ("AI 전술 추천 (F2010)", prompts.TACTIC_SYSTEM),
+    ("AI 추천 스쿼드 설명 (F2010)", prompts.SQUAD_SYSTEM),
     ("AI 코치 (F2010)", prompts.COACH_SYSTEM),
 ]
 parts = [MARK, "", "`data_prep/prompts.py` 에서 자동으로 뽑았다 (`python docs/make_prompt_appendix.py`). `{max_keywords}` 같은 자리는 settings.toml 값으로 채워진다.", ""]
