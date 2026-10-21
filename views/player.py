@@ -120,12 +120,14 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
     if conditions:   # 지금 등급으로 고를 수 있는 강화 팀컬러는 굵게 — 백금빛 물결이 왜 안 보이는지(11강 미만) 바로 알 수 있게
         st.caption("강화 팀컬러 조건: " + " · ".join(f"**{n} {g}강+**" if g <= grade else f"{n} {g}강+" for g, n in conditions)
                    + f" — 지금 +{grade}강은 굵은 것만 고를 수 있습니다.")
-    effects = ([level_effects(*enhance)] if enhance[0] else []) + ([level_effects(pick["id"], level)] if pick else []) \
-        + ([level_effects(relation["id"], None)] if relation else [])
+    enhance_effects = [level_effects(*enhance)] if enhance[0] else []
+    other_effects = ([level_effects(pick["id"], level)] if pick else []) + ([level_effects(relation["id"], None)] if relation else [])
     extras = ([f"적응도 +{adapt}"] if adapt > 1 else []) + ([enhance_label(enhance).split(" (")[0]] if enhance[0] else []) \
         + ([f"{pick['name']} Lv.{level}"] if pick else []) + ([relation["name"]] if relation else [])
     combo = (grade, adapt, (pick["id"], level) if pick else (0, 0), enhance, relation["id"] if relation else 0)
-    return {"grade": grade, "combo": combo, "effects": effects, "extras": extras}
+    # effects = 고른 팀컬러 전부 (계산용) · other_effects = 강화 팀컬러를 뺀 것 (초록 +N 의 기준 — 화면은 강화 팀컬러만 +N 으로)
+    return {"grade": grade, "combo": combo, "effects": enhance_effects + other_effects, "other_effects": other_effects,
+            "extras": extras}
 
 
 def _stars_html(base: int | None, grade: int) -> str:
@@ -152,7 +154,8 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         boosted = ctx.cards.exact(spid, pick["combo"])
         if boosted:
             shown, exact = {**boosted, "exact": True}, True
-    base = bonus_stats(info, grade, 1, [])   # 강화까지만 — 초록 +N 은 그 위에 적응도 · 팀컬러로 더 오른 만큼
+    # 초록 +N 의 기준 — 강화 · 적응도 · 소속/특성 팀컬러는 숫자에 바로 넣고, +N 은 강화 팀컬러로 더 오른 만큼만
+    base = bonus_stats(info, grade, adapt, [e for e in pick["other_effects"] if e])
     note = f"+{grade}강" + (f" · {' · '.join(pick['extras'])}" if pick["extras"] else "")
     mark = "" if exact else " ≈"
     stats = ctx.db.card_stats([spid]).get(spid) or {}
@@ -197,8 +200,9 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         f'<div class="fc-panel"><div class="title">클럽 경력</div>{ui_parts.club_history(info.get("clubs") or [])}</div>'
         "</div>", unsafe_allow_html=True)
     right.markdown(
-        f'<div class="fc-stack"><div class="fc-panel"><div class="title">능력치<small>{escape(note)} · 초록 숫자는 적응도 · 팀컬러로 '
-        f'더 오른 만큼</small></div>{ui_parts.ability_table(shown.get("stats") or {}, shown.get("summary") or {}, 0, base["stats"])}'
+        f'<div class="fc-stack"><div class="fc-panel"><div class="title">능력치<small>{escape(note)} · 강화 · 적응도는 숫자에 바로, '
+        f'초록 +N 은 강화 팀컬러로 더 오른 만큼</small></div>'
+        f'{ui_parts.ability_table(shown.get("stats") or {}, shown.get("summary") or {}, 0, base["stats"])}'
         "</div></div>", unsafe_allow_html=True)
 
 

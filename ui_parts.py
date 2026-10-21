@@ -678,7 +678,8 @@ def _up(value: int, base: int | None) -> str:
 
 
 def ovr_grid(position_ovr: dict[str, int], order: tuple[str, ...], bonus: int = 0, base: dict[str, int] | None = None) -> str:
-    """포지션별 OVR 16칸 (데이터센터 선수 정보 화면 순서) — bonus 를 더해 보이고, base(+1 기본값)보다 오른 만큼을 작게.
+    """포지션별 OVR 16칸 (데이터센터 선수 정보 화면 순서) — bonus 를 더해 보이고, base 보다 오른 만큼을 작게 (선수 상세는
+    강화 · 적응도 · 소속/특성 팀컬러까지 넣은 값을 base 로 넘겨, 초록 +N 은 강화 팀컬러로 오른 만큼만).
     가장 높은 포지션은 테두리."""
     if not position_ovr:
         return '<div class="fc-note">포지션별 OVR 을 아직 받지 못했습니다.</div>'
@@ -692,7 +693,7 @@ def ovr_grid(position_ovr: dict[str, int], order: tuple[str, ...], bonus: int = 
 
 
 def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0, base: dict[str, int] | None = None) -> str:
-    """세부 능력치 34개를 묶음별로 (요약 값과 함께) — bonus 를 모든 능력치에 더하고, base(+1 기본값)보다 오른 만큼을 작게."""
+    """세부 능력치 34개를 묶음별로 (요약 값과 함께) — bonus 를 모든 능력치에 더하고, base 보다 오른 만큼을 작게 (ovr_grid 와 같다)."""
     parts = []
     for group, names in ABILITY_GROUPS.items():
         head = f" <b>{summary[group] + bonus}</b>" if group in summary else ""

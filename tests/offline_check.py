@@ -563,6 +563,12 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     check(any("build_index.py" in w.value for w in at.warning), "색인이 비어 있으면 색인 스크립트 안내")
 
     os.environ["FCLAB_SETTINGS"] = str(tmp / "settings.toml")
+    seed = FcDb(tmp / "storage" / "fclab.db")   # 강화 팀컬러 하나 — 선수 상세의 '초록 +N 은 강화 팀컬러만' 점검용
+    seed.put_teamcolors([{"id": 10001, "name": "금빛 물결", "kind": "강화", "max_level": 2, "max_count": 8,
+                          "effects": ["전체 능력치 +4"], "icon": ""}])
+    seed.put_teamcolor_detail(10001, {"name": "금빛 물결", "description": "8강 이상의 선수들로 구성된 팀컬러입니다.",
+                                      "levels": [{"level": 1, "count": 5, "effects": ["전체 능력치 +3"]},
+                                                 {"level": 2, "count": 8, "effects": ["전체 능력치 +4"]}], "min_grade": 8})
     st.cache_resource.clear()
     at = app().run()
     check(not at.exception and any(k.startswith("top_") for k in keys(at)), "홈: 파워 랭킹 카드가 보인다")
@@ -706,9 +712,13 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     check(grid_html() != "", "선수 상세: 카드 정보 — 포지션별 오버롤 (받아 둔 상세)")
     at.button(key=f"pc_grade_{spid_t}__8").click().run()
     at.selectbox(key=f"pc_adapt_{spid_t}").select(5).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
-          and f'class="up">+{GRADE_OVR[8] + 4}<' not in grid_html(),
-          f"선수 상세: 8강 + 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 초록 숫자는 적응도로 더 오른 +4 만")
+    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up"' not in grid_html(),
+          f"선수 상세: 8강 + 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4 를 숫자에 바로 (적응도는 초록 +N 으로 따로 보이지 않음)")
+    enh = at.selectbox(key=f"pc_enh_{spid_t}_8")
+    enh.select_index(next(i for i, label in enumerate(enh.options) if "금빛 물결 Lv.2" in label)).run()
+    check(f"<b>{90 + GRADE_OVR[8] + 4 + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
+          and f'class="up">+8<' not in grid_html(),
+          f"선수 상세: 거기에 금빛 물결 Lv.2 → OVR {90 + GRADE_OVR[8] + 8}, 초록 +4 는 강화 팀컬러로 오른 만큼만 (적응도 +4 는 빼고)")
     check(any('★★★★<span class="star-up"' in m.value and ">★★</span>" in m.value for m in at.markdown),
           "선수 상세: 개인기 4성 카드를 8강으로 → 5 · 8강 별 2개를 초록으로 더해 6성")
     check(any('class="fc-qa-head"' in m.value for m in at.markdown), "선수 상세: Q&A · AI 리포트 · 근거 문서를 눈에 띄는 상자로 (제목 · 근거 기반 표시)")
