@@ -1,0 +1,17 @@
+# FC LAB 화면 설정 — streamlit run app.py 를 fclab 폴더에서 실행할 때 읽힌다.
+
+[theme]
+base = "dark"
+primaryColor = "#16e08a"
+backgroundColor = "#0a0f1c"
+secondaryBackgroundColor = "#141c2e"
+textColor = "#e6ecf5"
+borderColor = "#25304a"
+baseRadius = "medium"
+
+[client]
+showErrorDetails = "none"   # 트레이스백을 화면에 띄우지 않는다 (NF2004)
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

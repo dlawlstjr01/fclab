@@ -1,0 +1,155 @@
+# ⚽ FC Lab — FC 온라인 선수 비교 · 소개
+
+**RAG 기반 도메인 지식 서비스** (AI 코어 프로젝트 2회차)
+
+FC 온라인 선수 카드를 고르면 그 선수의 **실제 커리어**(한국어 위키백과)와 **FC 온라인 랭커 기록**(넥슨 Open API)을
+근거 문서와 함께 답하고, 소개하고, 다른 선수와 비교합니다. 근거로 확인되지 않는 내용은 "문서에서 확인되지 않습니다"라고 답합니다.
+
+| 메뉴 | 기능 | 요구사항 |
+|---|---|---|
+| 🏠 홈 | 이름 + **시즌(클래스) 드롭다운**으로 전체 88,359장을 바로 검색(수 ms), **🤖 AI로 찾기**(자연어 조건), 파워 랭킹 · 레전드 · 수비 TOP 미리보기 | F2009 · F2011 |
+| 👤 선수 | 큰 카드 · **AI 한줄 스카우팅** · 위키 소개 전문 · **같은 포지션 내 상위 %** · **랭커는 이 카드를 어디에 쓰나** · **💰 강화 단계별(+1~+13) 시세 · 사기/팔기 판단 · 내 거래가 비교** · **다른 시즌 카드** · 💬 선수 역사 Q&A · 🪪 AI 선수 리포트 · 📚 수집한 근거 문서 | F2009 · F2010 |
+| 🏆 파워 랭킹 | 포지션 · 현역/레전드 · 정렬 기준으로 랭커 경기당 기록 순위 (TOP 3 카드 + 전체 표). 골키퍼는 **선방률** | F2010 |
+| ⚖️ 비교 | 두 카드 스탯 차트(앞선 쪽 ▲) · 표 · **강화 단계별 시세 비교** · **AI 커리어 비교** | F2010 |
+| 🧠 전술 추천 | 포메이션 + 선수 11명(파워 랭킹 자동 · 내 최근 스쿼드 · 직접) → **AI 팀 전술 · 개인 전술 · 운영 팁** | F2010 |
+| ⭐ 즐겨찾기 | 자주 보는 카드 모아 보기 | — |
+| 🎮 내 기록 | 닉네임 → 최고 등급 · 최근 10경기 · **내 선수 vs 같은 카드 랭커 평균** · **AI 코치** · 거래 기록 | F2010 |
+| 근거 표시 | 모든 AI 답변은 실제로 인용한 `[근거 N]`만 제목 · 출처 유형 · 원문 링크로 보여 준다 | F2008 |
+
+> OVR · 특성 · 팀컬러는 넥슨 Open API 가 제공하지 않아 보여 주지 않습니다. 시세는 Open API 에 없어 FC 온라인 홈페이지
+> 데이터센터에서 읽습니다 (아래 '시세' 참고 — 공개 서비스로 배포할 때는 끈다).
+> 참고한 서비스: bstpg.com(선수 검색 · 시즌별 카드 · 파워 랭킹), fcalrimi.com(시즌 드롭다운 검색 · 즐겨찾기).
+
+---
+
+## 실행 방법
+
+```bash
+# 0) 가상환경 · 라이브러리 (명세서 1.2 고정 버전)
+python -m venv .venv
+source .venv/Scripts/activate            # macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+
+# 1) 키 — .env.example 을 복사해 .env 를 만들고 GMS_KEY · NEXON_API_KEY · WIKI_CONTACT 를 채운다
+cp .env.example .env
+
+# 2) 항목 메타데이터 만들기 (넥슨 API + 위키백과 첫 문단 → data/players.json)   F2001
+python build_items.py
+
+# 3) 메타데이터 색인 (player_meta 컬렉션)   F2002
+python build_index.py
+python build_index.py --show 손흥민       # 선수 1명의 색인 텍스트 확인 (키 필요 없음)
+
+# 4) 선수 자체 문서 미리 수집 · 색인 — 첫 질문의 기다림을 줄인다 (선택, 약 2분)
+python prefetch_wiki.py
+
+# 5) 앱 실행 (fclab 폴더에서 — .streamlit/config.toml 의 다크 테마가 적용된다)
+streamlit run app.py
+```
+
+점검 · 실험 스크립트
+
+```bash
+python tests/offline_check.py   # 키 · 네트워크 없이 흐름 · 규칙 · 화면 점검 (가짜 LLM · 임베딩 · 위키 · 넥슨)
+python check_live.py            # 실제 키로 연결 · 질문 · 수집 캐시 · 문서에 없는 질문 · 조건 탐색 점검
+python experiments.py           # similarity · MMR · Top-k · 청크 크기 비교 → docs/05_검색설정_실험결과.md
+python reindex_wiki.py          # 청크 설정을 바꾼 뒤 저장 문서를 다시 색인하고 컬렉션별 청크 수 비교
+python docs/make_prompt_appendix.py   # 설계서 부록에 prompts.py 의 프롬프트 원문을 다시 넣는다
+```
+
+## 기술 스택
+
+Python 3.12 · Streamlit 1.62 · LangChain 1.3 · LangGraph 1.2(retrieve → generate) · langchain-chroma / ChromaDB 1.5(벡터 DB) ·
+SQLite(앱 캐시) · OpenAI 호환 GMS(gpt-4o-mini · text-embedding-3-small) · 넥슨 Open API · 한국어 위키백과 API — 버전은 `requirements.txt`
+
+## 제출 산출물
+
+| # | 산출물 | 파일 |
+|---|---|---|
+| 1 | 요구사항 정의서 | [docs/01_요구사항정의서.md](docs/01_요구사항정의서.md) |
+| 2 | RAG 파이프라인 설계문서 | [docs/02_RAG_파이프라인_설계서.md](docs/02_RAG_파이프라인_설계서.md) · 실험 [docs/05_검색설정_실험결과.md](docs/05_검색설정_실험결과.md) |
+| 3 | 검증 결과 | [docs/03_검증결과.md](docs/03_검증결과.md) |
+| 4 | 구현 소스코드 | 이 폴더 (데이터 수집 `build_items.py` · `prefetch_wiki.py`, 색인 `build_index.py`, RAG `rag/`, 심화 F2014 `vector_store.py` · `experiments.py`) |
+| 5 | 셀프 체크리스트 | [docs/04_셀프체크리스트.md](docs/04_셀프체크리스트.md) (공식 양식은 3일차) |
+| 6 | README | 이 파일 |
+
+> `data/players.json`은 저장소에 포함되어 있어 2)는 건너뛰어도 됩니다. 랭커 스탯을 새로 받고 싶을 때만 다시 실행합니다.
+> 속도: 이름 검색 · 카드 열기는 네트워크 없이 수 ms(카드 메타데이터는 `storage/meta/` 에 하루 동안 캐시).
+> 선수 자체 문서를 미리 받아 두면 첫 질문은 추가 문서 수집(위키 호출 병렬) + 답변 생성만 남습니다. 같은 질문은 다시 수집하지 않습니다(NF2002).
+
+---
+
+## 데이터 준비 및 색인 절차
+
+```
+build_items.py   넥슨 메타데이터(spid · seasonid · spposition)
+                 → 26 TOTS · ICON · ICON TM 시즌 카드 432장
+                 → 카드 × 28포지션 랭커 스탯 → 랭커 주 포지션 · 경기당 평균
+                 → 선수 이름으로 한국어 위키백과 문서 찾기 → 첫 문단 · 원문 URL
+                 → data/players.json
+build_index.py   선수 1명 = 색인 텍스트 1개 → player_meta (청크 ID = spid, 다시 실행해도 덮어쓰기)
+prefetch_wiki.py 선수마다 위키 '선수 자체 문서'를 미리 받아 청킹 · 색인 (항상 색인해야 하는 문서라서)
+app.py (카드 열기) 분석 안 된 카드는 카드 정보로 화면을 먼저 띄우고, 랭커 스탯 · 위키 매칭으로 보강해
+                 → player_meta 에 추가 · storage/extra_players.json 에 남긴다
+app.py (질문 시) 프롬프트 1 검색어 추출 → 위키백과 검색 → 프롬프트 2 선별 → 본문 수집(storage/docs)
+                 → 1,000자 청크 · 200자 중복 → player_wiki_c1000_o200 (청크 ID = spid:문서ID:순번)
+                 → LangGraph retrieve(메타 1건 + 위키 Top-k) → generate(프롬프트 3)
+```
+
+자세한 설계는 [docs/02_RAG_파이프라인_설계서.md](docs/02_RAG_파이프라인_설계서.md)에 있습니다.
+
+---
+
+## 폴더 구조 (책임 분리 — NF2005)
+
+| 영역 | 파일 |
+|---|---|
+| 데이터 준비 (도메인에 묶인 부분) | `data_prep/players.py` 색인 텍스트 · `data_prep/player_builder.py` 카드 → 메타데이터 · 위키 매칭 · `data_prep/prompts.py` 프롬프트 · `data_prep/tactics.py` 포메이션 · 전술 항목 · `data_prep/nexon_api.py` · `data_prep/wiki_api.py` · `data_prep/collector.py` 수집 · `data_prep/market.py` 시세 읽기 · 사기/팔기 판단 · `build_items.py` · `prefetch_wiki.py` |
+| Vector Store | `vector_store.py` 컬렉션 · 청킹 · 색인 · 검색, `build_index.py`, `reindex_wiki.py` |
+| RAG 파이프라인 | `rag/graph.py` LangGraph retrieve/generate · `rag/citations.py` 근거 번호 |
+| 서비스 기능 | `services/answering.py` 질문 처리 흐름 · `services/explore.py` 조건 탐색 · `services/ai.py` AI 스카우팅 · 전술 · 코치 · `services/insights.py` 백분위 · 순위 · 내 경기 분석 · 골키퍼 선방 재료 · `services/market.py` 시세 백그라운드 수집 · 꺼져 있던 동안 따라잡기 |
+| UI | `app.py` 상단 메뉴 · `views/` 페이지별 화면 · `ui_parts.py` 카드 · 차트 · 경기장 · `.streamlit/config.toml` 테마 |
+| 설정 | `settings.toml` 청크 · Top-k · 검색 방식 · 모델, `.env` 키 |
+
+다른 도메인으로 바꿀 때는 `data_prep/`와 `build_items.py`만 고칩니다. 실제로 이 프로젝트는 영화 도메인으로 시작했다가 선수 도메인으로 바꿨고, 수집 · 색인 · 검색 · LangGraph 코드는 그대로 다시 썼습니다.
+
+---
+
+## 사용한 데이터 · 문서의 출처와 이용 조건 (NF2007)
+
+| 출처 | 쓰는 곳 | 이용 조건 · 표기 |
+|---|---|---|
+| [넥슨 Open API — FC 온라인](https://openapi.nexon.com/game/fconline/) | 선수 카드 · 시즌 · 포지션 메타데이터, 랭커 스탯, 선수 · 시즌 이미지 | 넥슨 Open API 이용약관을 따른다. 화면 하단에 **"Data based on NEXON Open API"** 를 표기한다. 키는 `.env`에만 둔다 |
+| [한국어 위키백과](https://ko.wikipedia.org/) | 선수 소개 첫 문단, 질문마다 수집하는 선수 · 클럽 · 대회 문서 | **CC BY-SA 4.0**. 근거 목록에 문서 제목과 원문 링크를 함께 보여 준다. User-Agent 에 연락처를 넣고 호출 간격을 둔다(NF2006) |
+| [FC 온라인 홈페이지 데이터센터](https://fconline.nexon.com/datacenter) | 강화 단계별 현재가 · 일별 시세 | **공식 Open API 가 아닌 화면용 응답** — 넥슨 약관 확인 필요. 수업 과제용으로 로컬에서만 켜고, 공개 서비스로 배포할 때는 `settings.toml` 의 `[market] enabled = false`. robots.txt 확인 · 1.2초 간격 · 한 번에 하나 · 6시간 캐시 · 사용자가 연 카드만 받는다 |
+
+## 시세 · 사기/팔기 판단 · 꺼져 있던 동안 채우기
+
+- **받는 방법**: 카드를 열거나 비교하면 그 카드의 +1~+13 시세를 백그라운드에서 차례로 받는다(카드 1장 약 16초, 화면은 받는 대로 채워진다). 88,359장 전체를 미리 긁지 않는다 — 약 115만 요청이라 서버 부하 · 약관 문제가 크다.
+- **판단(규칙 기반, 참고용)** `data_prep/market.py` `signal()`: 최근 30일 최저~최고 사이 위치 · 30일 평균 대비 · 최근 3일/7일 등락 · 하루 변동폭으로 *구매 적기 / 구매 대기(하락 중) / 관망 / 보유(상승 중) / 판매 적기* 를 정하고, 숫자로 된 근거 줄을 함께 보여 준다. 기록이 14일보다 짧으면 판단하지 않는다. 이벤트 · 새 시즌 출시는 모른다.
+- **앱이 꺼져 있던 동안**: 일별 시세를 SQLite(`market_history`)에 날짜 단위로 쌓는다. 다시 켜면 30일 안에 본 카드 중 오래된 시세(최대 60건)를 뒤쪽 우선순위로 다시 받아, 응답에 든 최근 일별 기록(카드에 따라 약 4개월~1년)으로 빈 날짜를 채운다. 화면에 "꺼져 있던 동안 +5 N일 채움"으로 알려 준다. 30일 넘게 안 본 카드의 시세는 지운다.
+- **골키퍼 선방률**: 랭커 API 에 선방 항목이 없어(골키퍼 30장 모두 블록 · 태클 0), 🎮 내 기록 · 내 스쿼드가 이미 받은 경기 상세에서 양 팀 골키퍼의 상대 유효슈팅 · 실점을 모아(추가 호출 없음, 유저 식별자 저장 안 함, 최근 30일) 선방률 = 1 − 실점 ÷ 상대 유효슈팅 으로 계산한다. 상대 유효슈팅 10개 이상 모인 카드만 보여 준다.
+
+---
+
+## 심화 기능
+
+| 번호 | 내용 | 상태 |
+|---|---|---|
+| F2014 MMR 검색 | `settings.toml` 의 `search_type = "mmr"` (fetch_k 20, λ 0.5) 로 바꾸면 위키 청크를 MMR 로 고른다 | 구현 · 비교 완료 — 국가대표 질문에서 근거 문서 1종 → 2종. 관련 낮은 문서도 들어와 기본값은 similarity ([실험 결과](docs/05_검색설정_실험결과.md)) |
+| F2013 · F2015 · F2016 | — | 선택하지 않음 |
+
+---
+
+## 알려진 제한 사항
+
+- OVR · 특성 · 팀컬러 · 스쿼드 메이커는 넥슨 Open API 가 제공하지 않아 없다. 시세는 비공식 경로(데이터센터)라 화면 구조가 바뀌면 '시세 없음'으로 바뀐다 — `data_prep/market.py` 의 패턴 상수만 고친다.
+- 사기/팔기 판단은 가격 추이만 보는 규칙이다. 판매 수수료 · 이벤트 · 새 시즌 출시는 반영하지 않는다.
+- 미리 분석한 432장 중 50장은 연결할 위키 문서를 찾지 못했다(동명이인 규칙으로 거른 후보는 `data/build_report.json`). 이 카드는 메타데이터 · 랭커 기록만으로 답한다.
+- 랭커 스탯은 '그 카드를 그 포지션에 쓴 최근 최대 20경기 평균'이다. 사용률(몇 명이 쓰나)은 Open API 에 없다.
+- 전술 항목 이름 · 선택지는 게임 업데이트로 바뀔 수 있다 — `data_prep/tactics.py` 한 곳에서 고친다.
+- 첫 질문은 추가 문서 수집 + LLM 호출 3번 때문에 수 초~십여 초 걸린다(측정: 10.5초). 같은 질문은 수집 없이 2~3초.
+- 즐겨찾기 · 앱 캐시는 이 컴퓨터의 SQLite 하나를 쓴다(사용자 계정 구분 없음).
+- **넥슨 Open API 테스트 키는 하루 1,000회**(`x-ratelimit-limit`)다. `build_items.py` 한 번에 약 220회를 쓴다. 한도를 다 쓰면 랭커 스탯 · 계정 연결 · 내 기록은 다음 날까지 안내만 나오고, 검색 · 미리 분석한 카드 · AI 기능은 계속 동작한다. 앱은 남은 호출이 200회 아래면 백그라운드 미리 분석을 멈춘다.
+- 넥슨 로그인(OAuth)과 '현재 스쿼드' API 가 없어, 계정 연결은 닉네임으로 하고 '내 스쿼드'는 최근 공식경기 선발 11명으로 대신한다.
+- 카드 특성(신규 특성 포함) · 능력치는 Open API 에 없어 특성 검색은 할 수 없다.
