@@ -367,7 +367,27 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-sum span {{ display: block; font-size: 11px; color: {t['muted']}; }}
 .fc-sum b {{ font-size: 18px; color: {t['ink']}; font-variant-numeric: tabular-nums; white-space: nowrap; }}
 .fc-sum b.txt {{ font-size: 15px; }}
+.fc-sum b .star-up {{ display: inline; font-size: inherit; color: {ACCENT}; }}   /* 강화로 더해진 개인기 별 — 초록 = 오른 만큼 */
 .fc-sum small {{ font-size: 11px; color: {t['ink2']}; }}
+
+/* 선수 상세의 Q&A · AI 리포트 · 근거 문서 — 이 서비스의 중심(근거 기반 질문 답변)이라 초록 테두리 상자로 눈에 띄게 */
+.st-key-qa_zone {{ border: 1.5px solid rgba(22,224,138,.55); border-radius: 18px; padding: 14px 18px 16px;
+  background: linear-gradient(180deg, rgba(22,224,138,.10) 0%, {t['surface']} 70%); box-shadow: 0 0 22px rgba(22,224,138,.12);
+  margin: 6px 0 14px; }}
+.fc-qa-head {{ display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; font-size: 19px; font-weight: 900;
+  color: {t['ink']}; }}
+.fc-qa-head small {{ font-size: 12.5px; font-weight: 600; color: {t['ink2']}; }}
+.fc-qa-head .tag {{ font-size: 11px; font-weight: 800; color: {ACCENT}; border: 1px solid rgba(22,224,138,.5);
+  border-radius: 999px; padding: 1px 9px; }}
+.st-key-qa_zone [data-baseweb="tab"] p {{ font-size: 15.5px; font-weight: 800; }}
+.st-key-qa_zone [data-baseweb="tab"][aria-selected="true"] p {{ color: {ACCENT}; }}
+.st-key-qa_zone .stButton button[data-testid="stBaseButton-secondary"] {{ border: 1.5px solid rgba(22,224,138,.45);
+  background: {t['raise']}; }}
+.st-key-qa_zone .stButton button[data-testid="stBaseButton-secondary"]:hover {{ border-color: {ACCENT};
+  background: rgba(22,224,138,.14); }}
+.st-key-qa_zone [data-testid="stChatInput"] {{ border: 1.5px solid {ACCENT}; border-radius: 14px;
+  box-shadow: 0 0 0 4px rgba(22,224,138,.12); }}
+.st-key-qa_zone [data-testid="stChatInput"] textarea {{ font-size: 15px; }}
 .fc-gauge {{ height: 8px; border-radius: 4px; background: {t['grid']}; overflow: hidden; margin-top: 6px; }}
 .fc-gauge i {{ display: block; height: 8px; background: {ACCENT}; }}
 .fc-gauge.over i {{ background: #ff6b6b; }}

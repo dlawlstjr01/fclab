@@ -19,6 +19,15 @@ import numpy as np
 MAX_GRADE = 13
 SUCCESS = {1: 100, 2: 81, 3: 64, 4: 50, 5: 26, 6: 15, 7: 7, 8: 5, 9: 4, 10: 3, 11: 2, 12: 1}   # 지금 등급 → 성공 % (게이지 100%)
 GRADE_OVR = {1: 0, 2: 1, 3: 2, 4: 4, 5: 6, 6: 8, 7: 11, 8: 15, 9: 17, 10: 19, 11: 21, 12: 24, 13: 27}   # +1 대비 OVR
+SKILL_STEPS = (5, 8, 11)   # 이 강화 등급에 오를 때마다 개인기 별 +1
+SKILL_MAX = 6
+
+
+def skill_stars(base: int, grade: int | None) -> tuple[int, int]:
+    """(카드 기본 개인기 별, 강화로 더해진 별) — 5 · 8 · 11강에서 하나씩, 합쳐 최대 6개."""
+    base = max(0, base or 0)
+    added = sum(1 for step in SKILL_STEPS if (grade or 1) >= step)
+    return base, max(0, min(SKILL_MAX - base, added))
 
 
 def _table(spec: str) -> dict[int, float]:

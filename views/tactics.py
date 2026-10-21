@@ -289,10 +289,10 @@ def squad_view(ctx: Ctx, codes: list[str], players: dict[str, dict | None], grad
     teamcolors = ctx.teamcolors.all()
     members = [{"name": s["player"]["name"], "grade": s["grade"], "code": code,
                 "teamcolors": (s["info"] or {}).get("teamcolors") if s["info"] else None} for code, s in slots.items()]
-    enhance = [tc["id"] for tc in teamcolors if tc["kind"] == "강화"]
     used = {t["id"] for m in members for g in ("소속", "관계") for t in (m["teamcolors"] or {}).get(g, [])}
-    team = squad_teamcolors(members, teamcolors, ctx.teamcolors.details(enhance + sorted(used)))
-    tc_ids = enhance + team["need_detail"]
+    # 강화 팀컬러(동빛 ~ 백금빛 물결)는 단계('N강 이상')를 모르면 계산에서 빠진다 — 없으면 지금 받는다 (처음 한 번)
+    team = squad_teamcolors(members, teamcolors, ctx.teamcolors.details(sorted(used)) | ctx.teamcolors.enhance_details())
+    tc_ids = team["need_detail"]
     ctx.teamcolors.want(tc_ids)
     exact_jobs = _teamcolor_ovrs(ctx, slots, team)
     pays = [s["pay"] for s in slots.values() if s["pay"] is not None]

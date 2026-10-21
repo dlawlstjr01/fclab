@@ -13,6 +13,7 @@ from html import escape
 import streamlit as st
 
 import ui_parts
+from data_prep.enhance import skill_stars
 from data_prep.prompts import TASK_LABELS
 from services.ai import scout_line
 from services.cardinfo import bonus_stats
@@ -74,8 +75,9 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
     enhance_ids = [i for i, tc in teamcolors.items() if tc["kind"] == "강화"]
     own = (info.get("teamcolors") or {}).get("소속", [])
     features = (info.get("teamcolors") or {}).get("관계", [])
-    details = ctx.teamcolors.details(enhance_ids + [t["id"] for t in own + features])
-    ctx.teamcolors.want(enhance_ids + [t["id"] for t in own + features])   # 단계별 효과를 미리 — 고르자마자 바로 계산되게
+    # 강화 팀컬러는 단계('N강 이상')를 알아야 목록에 들어가므로 없으면 지금 받는다 (처음 한 번 · 몇 개뿐)
+    details = ctx.teamcolors.details([t["id"] for t in own + features]) | ctx.teamcolors.enhance_details()
+    ctx.teamcolors.want([t["id"] for t in own + features])   # 단계별 효과를 미리 — 고르자마자 바로 계산되게
     grade = grade_buttons("강화", f"pc_grade_{spid}")
     a_col, e_col, t_col, l_col, r_col, x_col = st.columns([0.8, 2.1, 2.1, 0.9, 2.1, 1], vertical_alignment="bottom")
     adapt = a_col.selectbox("적응도", list(range(1, 6)), key=f"pc_adapt_{spid}", format_func=lambda a: f"+{a}",
@@ -97,8 +99,10 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
         lv = next(lv for lv in details[option[0]]["levels"] if lv["level"] == option[1])
         return f"{teamcolors[option[0]]['name']} Lv.{option[1]} ({lv['count']}명 · {', '.join(lv['effects'])})"
 
+    conditions = sorted((details[i]["min_grade"], teamcolors[i]["name"]) for i in enhance_ids
+                        if (details.get(i) or {}).get("min_grade"))
     enhance = e_col.selectbox("강화 팀컬러", enhance_options, key=f"pc_enh_{spid}_{grade}", format_func=enhance_label,
-                              help="강화 등급 조건을 채우는 팀컬러만 (예: 금빛 물결 = 8강 이상)")
+                              help="강화 등급 조건을 채우는 팀컬러만 — " + " · ".join(f"{n} {g}강 이상" for g, n in conditions))
     pick = t_col.selectbox("소속 팀컬러", [None] + own, key=f"pc_tc_{spid}",
                            format_func=lambda t: "소속 팀컬러 없음" if t is None else t["name"])
     level = 0
@@ -113,12 +117,25 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
                                help="연도별 · 듀오 같은 팀컬러 (데이터센터 선수 정보의 '관계 팀컬러')")
     x_col.button("↺ 초기화", key=f"pc_reset_{spid}", on_click=_reset_bonus, args=(spid,), width="stretch",
                  help="+1강 · 적응도 1 · 팀컬러 없음으로 되돌린다")
+    if conditions:   # 지금 등급으로 고를 수 있는 강화 팀컬러는 굵게 — 백금빛 물결이 왜 안 보이는지(11강 미만) 바로 알 수 있게
+        st.caption("강화 팀컬러 조건: " + " · ".join(f"**{n} {g}강+**" if g <= grade else f"{n} {g}강+" for g, n in conditions)
+                   + f" — 지금 +{grade}강은 굵은 것만 고를 수 있습니다.")
     effects = ([level_effects(*enhance)] if enhance[0] else []) + ([level_effects(pick["id"], level)] if pick else []) \
         + ([level_effects(relation["id"], None)] if relation else [])
     extras = ([f"적응도 +{adapt}"] if adapt > 1 else []) + ([enhance_label(enhance).split(" (")[0]] if enhance[0] else []) \
         + ([f"{pick['name']} Lv.{level}"] if pick else []) + ([relation["name"]] if relation else [])
     combo = (grade, adapt, (pick["id"], level) if pick else (0, 0), enhance, relation["id"] if relation else 0)
     return {"grade": grade, "combo": combo, "effects": effects, "extras": extras}
+
+
+def _stars_html(base: int | None, grade: int) -> str:
+    """개인기 별 — 카드 기본 별 + 강화로 더해진 별(초록, 5 · 8 · 11강에서 하나씩 · 최대 6개)."""
+    if not base:
+        return '<b class="txt">-</b>'
+    have, added = skill_stars(base, grade)
+    plus = f'<span class="star-up" title="강화로 더해진 개인기 (5 · 8 · 11강)">{"★" * added}</span>' if added else ""
+    note = f" <small>{have}+{added} · 5·8·11강마다 +1</small>" if added else " <small>5·8·11강마다 +1 (최대 6)</small>"
+    return f'<b class="txt">{"★" * have}{plus}</b>{note}'
 
 
 @st.fragment
@@ -155,7 +172,7 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         ("최고 포지션 OVR", f"<b>{best}{mark}</b>"),
         ("급여", f'<b>{info.get("pay") or "-"}</b>{pay_note}'),
         ("주발", f'<b class="txt">{foot_text}</b> <small>{main_foot}</small>'),
-        ("개인기", f'<b class="txt">{"★" * (info.get("skill_moves") or 0) or "-"}</b>'),
+        ("개인기", _stars_html(info.get("skill_moves"), grade)),
         ("키 · 몸무게", f'<b class="txt">{escape(info.get("height", ""))} · {escape(info.get("weight", ""))}</b> '
                       f'<small>{escape(info.get("body", ""))}</small>'),
         ("국적 · 명성", f'<b class="txt">{escape(info.get("nation", "") or "-")}</b> <small>{escape(info.get("reputation", ""))}</small>'),
@@ -320,8 +337,12 @@ def render(ctx: Ctx) -> None:
 
     # ── 탭: Q&A · AI 리포트 · 근거 문서 (비교는 위의 '⚖️ 비교하기' 모달) ─────
     # 자리와 입력만 여기에. 답변 · 리포트 생성과 근거 문서 목록은 맨 마지막에 채운다.
-    qa_tab, intro_tab, docs_tab = st.tabs([f"💬 {TASK_LABELS['qa']}", f"🪪 AI {TASK_LABELS['intro']} 리포트",
-                                           "📚 수집한 근거 문서"])
+    with st.container(key="qa_zone"):   # 눈에 띄게 — 초록 테두리 상자 (ui_parts.css 의 .st-key-qa_zone)
+        st.markdown(f'<div class="fc-qa-head">🤖 AI에게 {escape(player["name"])} 물어보기<span class="tag">근거 기반 RAG</span>'
+                    '<small>위키백과 · 넥슨 데이터에 있는 것만, 문장마다 근거 번호와 함께 답합니다</small></div>',
+                    unsafe_allow_html=True)
+        qa_tab, intro_tab, docs_tab = st.tabs([f"💬 {TASK_LABELS['qa']}", f"🪪 AI {TASK_LABELS['intro']} 리포트",
+                                               "📚 수집한 근거 문서"])
 
     with qa_tab:
         history = st.session_state.chats.setdefault(player["player_id"], [])

@@ -418,10 +418,14 @@ check(blocked.blocked and not blocked._queued, "robots.txt 가 막으면 남은 
 
 print("\n스쿼드 메이커 · 팀컬러 · 능력치 DB · 강화 확률")
 from data_prep.datacenter import parse_foot, parse_teamcolor_detail  # noqa: E402
-from data_prep.enhance import GRADE_OVR, odds, simulate  # noqa: E402
+from data_prep.enhance import GRADE_OVR, odds, simulate, skill_stars  # noqa: E402
 from data_prep.tactics import BASE_POSITION, OVR_GRID, ovr_at  # noqa: E402
 from services.squad import slot_ovr  # noqa: E402
 from services.stats import PAGE, PASSES, StatsCrawler  # noqa: E402
+
+check([skill_stars(3, g) for g in (4, 5, 8, 11, 13)] == [(3, 0), (3, 1), (3, 2), (3, 3), (3, 3)]
+      and skill_stars(5, 13) == (5, 1) and skill_stars(6, 11) == (6, 0),
+      "개인기 별: 5 · 8 · 11강에서 하나씩 더하고 최대 6개 (3성 → 13강 6성, 5성 → 6성까지만)")
 from services.teamcolor import squad_teamcolors  # noqa: E402
 
 grid = {pos: 100 for pos in OVR_GRID} | {"CAM": 120, "CM": 117}
@@ -659,7 +663,7 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     app_db.put_card_info(spid_t, {"v": 2, "ovr": 110, "position": BASE_POSITION[code], "pay": 21,
                                   "position_ovr": {pos: 90 for pos in OVR_GRID} | {BASE_POSITION[code]: 108},
                                   "teamcolors": {"소속": [], "관계": [], "강화": []}, "traits": [], "summary": {"스피드": 100},
-                                  "foot_lr": {"L": 3, "R": 5, "main": "R"}, "clubs": [], "stats": {}})
+                                  "foot_lr": {"L": 3, "R": 5, "main": "R"}, "clubs": [], "stats": {}, "skill_moves": 4})
     squad_state[code]["grade"] = 5
     at.run()
     expect = 108 + GRADE_OVR[5]
@@ -705,6 +709,9 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
           and f'class="up">+{GRADE_OVR[8] + 4}<' not in grid_html(),
           f"선수 상세: 8강 + 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 초록 숫자는 적응도로 더 오른 +4 만")
+    check(any('★★★★<span class="star-up"' in m.value and ">★★</span>" in m.value for m in at.markdown),
+          "선수 상세: 개인기 4성 카드를 8강으로 → 5 · 8강 별 2개를 초록으로 더해 6성")
+    check(any('class="fc-qa-head"' in m.value for m in at.markdown), "선수 상세: Q&A · AI 리포트 · 근거 문서를 눈에 띄는 상자로 (제목 · 근거 기반 표시)")
     at.button(key=f"pc_reset_{spid_t}").click().run()
     check(f"<b>{90 + GRADE_OVR[1]}</b>" in grid_html() and 'class="up"' not in grid_html(),
           "선수 상세: ↺ 초기화 → +1강 · 적응도 1 · 팀컬러 없음")
