@@ -90,8 +90,9 @@ def render(ctx: Ctx) -> None:
         unsafe_allow_html=True,
     )
 
-    back_col, q_col, s_col, ai_col, clear_col = st.container(key="wrap_search").columns(
-        [0.9, 4, 3.4, 1.4, 0.9], vertical_alignment="bottom")
+    # 검색 줄 — ← 뒤로 · 검색어 · 시즌 · ↺ 초기화 · 🤖 AI로 찾기 (초기화는 실행 버튼 바로 왼쪽, 넓은 화면은 한 줄: ui_parts.css)
+    back_col, q_col, s_col, clear_col, ai_col = st.container(key="wrap_search").columns(
+        [0.9, 4, 3.4, 1, 1.4], vertical_alignment="bottom")
     back_button("home", back_col)
     query = q_col.text_input("선수 검색", key="q", placeholder="선수 이름 (예: 손흥민, 호날두)  ·  또는 조건 (예: 발 빠른 한국 윙어)",
                              label_visibility="collapsed")
@@ -99,8 +100,8 @@ def render(ctx: Ctx) -> None:
         season = season_select(ctx, key="q_season")
     ai_clicked = ai_col.button("🤖 AI로 찾기", key="ai_search", type="primary", width="stretch")
     searching = bool(query.strip() or season or st.session_state.explore_results)
-    clear_col.button("✕ 지우기", key="q_clear", on_click=_clear, width="stretch", disabled=not searching,
-                     help="검색을 지우고 첫 화면으로")
+    clear_col.button("↺ 초기화", key="q_clear", on_click=_clear, width="stretch", disabled=not searching,
+                     help="검색어 · 시즌 · AI 결과를 지우고 첫 화면으로")
 
     if "chips" not in st.session_state:   # 자주 찾는 조건 중 무작위 — 들어올 때마다 바뀌고, 🔀 로 다시 뽑는다
         _shuffle_chips(ctx)

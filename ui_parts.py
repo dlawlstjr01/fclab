@@ -164,6 +164,15 @@ button[data-testid="stBaseButton-tertiary"]:hover {{ background: rgba(127,127,12
 /* 반응형 — 화면이 좁아지면 줄바꿈 (st-key-wrap_* : 필터 줄, st-key-grid_* : 카드 묶음) */
 div[class*="st-key-wrap_"] [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .5rem; }}
 div[class*="st-key-wrap_"] [data-testid="stColumn"] {{ min-width: min(100%, 120px); }}
+/* 홈 검색 줄 — 넓은 화면은 한 줄. 버튼 칸(← 뒤로 · ↺ 초기화 · AI로 찾기)은 글자만큼은 늘 차지하고 검색어 · 시즌 칸이 줄어든다
+   (칸마다 최소 120px 이라 마지막 초기화 칸이 다음 줄로 밀려 줄 하나를 통째로 차지했다) */
+@media (min-width: 641px) {{
+  div.st-key-wrap_search [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap; }}
+  .st-key-wrap_search [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{ min-width: 0; }}
+  .st-key-wrap_search [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:is(:nth-child(1), :nth-child(4), :nth-child(5)) {{
+    min-width: max-content; }}
+}}
+.st-key-wrap_search button p {{ white-space: nowrap; }}
 div[class*="st-key-grid_"] [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; }}
 div[class*="st-key-grid_"] [data-testid="stColumn"] {{ min-width: 150px; flex: 1 1 150px; }}
 @media (max-width: 1100px) {{
