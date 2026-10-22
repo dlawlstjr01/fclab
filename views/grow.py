@@ -228,10 +228,12 @@ def render(ctx: Ctx) -> None:
             else:
                 st.warning(f"🎯 +{goal['from']} → +{goal['target']}: {goal['tries']:,}번 강화했지만 아직 +{run['grade']} "
                            f"(한 번에 최대 {GOAL_CAP:,}번)")
-        st.markdown(ui_parts.grow_record(run["tries"], run["ok"], run["crit"], run["fail"]), unsafe_allow_html=True)
-        steps = run.get("steps") or {}
-        if len(steps) > 1 or (steps and run["tries"] > 1):
-            st.markdown(ui_parts.grow_steps(steps, boost), unsafe_allow_html=True)
+        # 단계별 기록 — 노리는 단계(지금 등급부터)의 성공 비율이 맨 위. 실패로 내려가 다시 올린 시도는 따로 한 줄
+        # (전체 성공 비율 하나만 보이면 쉬운 단계가 섞여 +7 → +8 을 노렸는데 69% 처럼 보였다)
+        st.markdown(ui_parts.grow_record(run.get("steps") or {}, start, boost), unsafe_allow_html=True)
+        if not locked and any(int(g) < start for g in (run.get("steps") or {})):
+            st.caption(f"실패하면 공식 복구표대로 등급이 내려가(예: +7 실패 → +1 ~ +5) 그 아래 단계를 다시 올리는 시도가 생깁니다 — "
+                       "'다시 올리기' 줄. '지금 등급 고정'을 켜면 실패해도 내려가지 않습니다 (게임의 BP 강화 등급 보호처럼).")
         _, r_col, _ = st.columns([1, 1, 1])
         r_col.button("↺ 초기화", key="gr_reset", width="stretch", on_click=_reset_run, args=(spid, start),
                      help=f"+{start} 로 되돌리고 기록을 지웁니다")

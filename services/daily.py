@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 
-from data_prep.datacenter import daily_date
+from data_prep.datacenter import daily_date, fetch_daily_stats, fetch_formations
 from data_prep.market import MarketBlocked
 
 log = logging.getLogger("fclab.daily")
@@ -33,11 +33,11 @@ class DailyBoard:
 
     def stats(self, order: str = "ATTACKPOINT", mode: str = "official", wait: bool = False) -> dict | None:
         """선수 기록 TOP {"date", "rows": parse_daily_stats} — 아직 없으면 None (뒤에서 받는 중)."""
-        return self._get(("stats", order, mode), lambda day: self.client.daily_stats(order, mode, day), wait)
+        return self._get(("stats", order, mode), lambda day: fetch_daily_stats(self.client, order, mode, day), wait)
 
     def formations(self, mode: str = "official", wait: bool = False) -> dict | None:
         """포메이션 이용률 {"date", "rows": [{formation, users, share}]}."""
-        return self._get(("formations", mode), lambda day: self.client.formations(mode, day), wait)
+        return self._get(("formations", mode), lambda day: fetch_formations(self.client, mode, day), wait)
 
     def usage(self, position: str, mode: str = "official", wait: bool = False) -> dict | None:
         """그 포지션에 랭커가 많이 쓴 카드 16장 {"date", "rows": parse_usage} (날짜를 고를 수 없어 늘 최신)."""

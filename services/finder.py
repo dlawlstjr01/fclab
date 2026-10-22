@@ -16,7 +16,7 @@ import logging
 import re
 from dataclasses import asdict, dataclass, field, replace
 
-from data_prep.datacenter import FOOT, POSITION_FILTER, REPUTATION, STAT_CODES
+from data_prep.datacenter import FOOT, POSITION_FILTER, REPUTATION, STAT_CODES, fetch_search_options, search_cards
 from data_prep.nexon_api import split_spid
 from data_prep.prompts import find_messages
 from llm import parse_json, reply_text
@@ -270,7 +270,7 @@ class CardFinder:
     def options(self) -> dict:
         data = self.db.dc_get(OPTIONS_KEY, 24 * 7)
         if data is None and self.client is not None:
-            data = self.client.search_options()
+            data = fetch_search_options(self.client)   # 모듈 함수 — 앱을 켠 채 코드가 바뀌어 예전 창구 객체여도 된다
             self.db.dc_put(OPTIONS_KEY, data)
         return data or {"teams": {}, "nations": {}, "leagues": {}, "team_league": {}, "traits": []}
 
@@ -291,8 +291,8 @@ class CardFinder:
         rows = self.db.dc_get(f.key(), CACHE_HOURS)
         if rows is None:
             options = self.options()
-            rows = self.client.player_list(
-                f.name, seasons=list(f.seasons) or None, positions=list(f.positions) or None,
+            rows = search_cards(
+                self.client, f.name, seasons=list(f.seasons) or None, positions=list(f.positions) or None,
                 nation_id=options["nations"].get(f.nation) if f.nation else None,
                 league_id=options["leagues"].get(f.league) if f.league else None,
                 team_id=options["teams"].get(f.club) if f.club else None, club_history=f.club_history,

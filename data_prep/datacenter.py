@@ -344,6 +344,75 @@ def daily_date(now=None, back: int = 0) -> str:
     return day.strftime("%Y.%m.%d")
 
 
+def list_form(name: str = "", *, seasons: list[int] | None = None, positions: list[str] | None = None,
+              team_id: int | None = None, nation_id: int | None = None, teamcolor_id: int | None = None,
+              order: str = "ovr", ovr_min: int | None = None, ovr_max: int | None = None,
+              price_max: int | None = None, skills: tuple[str, ...] = (),
+              height: tuple[int, int] | None = None, weight: tuple[int, int] | None = None,
+              league_id: int | None = None, club_history: bool = True, traits: tuple[str, ...] = (),
+              foot: int | None = None, weak_foot: int | None = None, skill_moves: int | None = None,
+              reputation: int | None = None, pay_min: int | None = None, pay_max: int | None = None) -> dict:
+    """선수 검색 (한 번에 최대 200장). 이름만 주면 그 이름이 들어간 선수의 카드 전부. teamcolor_id 면 그 팀컬러가
+    적용되는 카드만. skills 는 같이 받을 능력치 칸(STAT_CODES 중 최대 4개). price_max 는 +1 강화 가격 상한(BP).
+    height · weight = (최소, 최대) cm · kg — 같은 OVR 이 200장을 넘을 때 더 잘게 나눠 묻는 데 쓴다.
+    조건 검색: league_id · team_id(club_history=True 면 클럽 경력까지) · nation_id · traits(보유 특성 이름 최대 3개) ·
+    foot(FOOT: 1 오른발 · 2 왼발) · weak_foot(약발 1~5) · skill_moves(개인기 별 1~6) · reputation(명성 1~5) · 급여."""
+    form = dict.fromkeys(LIST_FIELDS, "")
+    form.update({"strPlayerName": name, "n4PageNo": "1", "strOrderby": ORDER_BY.get(order, "")})
+    form.update({f"strSkill{i}": code for i, code in enumerate(skills[:4], start=1)})
+    if teamcolor_id:
+        form["teamcolorid"] = str(teamcolor_id)
+    if ovr_max:
+        form["n4OvrMax"] = str(ovr_max)
+    if seasons:
+        form["strSeason"] = "," + ",".join(str(s) for s in seasons) + ","
+    if positions:
+        form["strPosition"] = "," + ",".join(POSITION_FILTER[p] for p in positions) + ","
+    if team_id:
+        form["n4TeamId"] = str(team_id)
+    if nation_id:
+        form["n4NationId"] = str(nation_id)
+    if ovr_min:
+        form["n4OvrMin"] = str(ovr_min)
+    if price_max:
+        form["n8PlayerGrade1Max"] = str(price_max // 1000)   # 화면의 가격 범위는 1,000 BP 단위
+    for field, bounds in (("Height", height), ("Weight", weight)):
+        if bounds:
+            form[f"n4{field}Min"], form[f"n4{field}Max"] = str(bounds[0]), str(bounds[1])
+    form["n1History"] = "0" if club_history else "1"   # 0 = 클럽 경력까지 (화면의 '클럽 경력' 체크)
+    extra = {"n4LeagueId": league_id, "preferredfoot": foot, "n1FootAblity": weak_foot, "n1SkillMove": skill_moves,
+             "n1InterationalRep": reputation, "n4SalaryMin": pay_min, "n4SalaryMax": pay_max}
+    form.update({key: str(value) for key, value in extra.items() if value})
+    form.update({f"strTrait{i}": trait for i, trait in enumerate(traits[:3], start=1)})
+    return form
+
+
+def search_cards(client, name: str = "", **filters) -> list[dict]:
+    """선수 검색 — 창구(client)의 _post 만 쓴다. 화면이 쓰는 데이터센터 창구는 Streamlit cache_resource 에 앱이 켜질 때
+    한 번 만들어 두므로, 앱을 켠 채 코드가 바뀌면 예전 모습의 창구가 남는다 — 그래도 새 검색 조건이 되게 모듈 함수로 둔다."""
+    return parse_player_list(client._post(LIST_PATH, list_form(name, **filters)), tuple(filters.get("skills", ()))[:4])
+
+
+def fetch_search_options(client) -> dict:
+    """선수 검색 화면의 목록 (국적 · 리그 · 클럽 · 특성) — parse_search_options."""
+    return parse_search_options(client._post(SEARCH_PAGE, {}, method="GET"))
+
+
+def fetch_daily_stats(client, order: str = "ATTACKPOINT", mode: str = "official", day: str | None = None,
+                      ranks: tuple[int, int] = (1, 10000)) -> list[dict]:
+    """데일리 기록 — 그날 랭커가 쓴 카드의 기록 TOP 18 (order = DAILY_STATS 의 키)."""
+    return parse_daily_stats(client._post(DAILY_STAT_PATH, {"strDate": day or daily_date(), "strOrderBy": order,
+                                                            "n1Type": MODES[mode], "n4StartRanking": ranks[0],
+                                                            "n4EndRanking": ranks[1]}, method="GET"))
+
+
+def fetch_formations(client, mode: str = "official", day: str | None = None) -> list[dict]:
+    """데일리 차트 — 랭커 포메이션 이용률 (상위 10개)."""
+    return parse_formations(client._post(FORMATION_PATH, {"strDate": day or daily_date(), "strType": "usage",
+                                                          "n1Type": MODES[mode], "n4StartRanking": 1,
+                                                          "n4EndRanking": 10000}, method="GET"))
+
+
 def parse_teams(text: str) -> dict[str, dict[str, int]]:
     """선수 검색 화면 → {"teams": {클럽 이름: 번호}, "nations": {국적: 번호}} (팀컬러 고르기 · 검색에 쓴다)."""
     return {"teams": {html.unescape(label).strip(): int(no) for no, label in TEAM_OPTION.findall(text)},
@@ -514,47 +583,9 @@ class DatacenterClient:
             time.sleep(3)
         raise MarketError(str(error))
 
-    def player_list(self, name: str = "", *, seasons: list[int] | None = None, positions: list[str] | None = None,
-                    team_id: int | None = None, nation_id: int | None = None, teamcolor_id: int | None = None,
-                    order: str = "ovr", ovr_min: int | None = None, ovr_max: int | None = None,
-                    price_max: int | None = None, skills: tuple[str, ...] = (),
-                    height: tuple[int, int] | None = None, weight: tuple[int, int] | None = None,
-                    league_id: int | None = None, club_history: bool = True, traits: tuple[str, ...] = (),
-                    foot: int | None = None, weak_foot: int | None = None, skill_moves: int | None = None,
-                    reputation: int | None = None, pay_min: int | None = None, pay_max: int | None = None) -> list[dict]:
-        """선수 검색 (한 번에 최대 200장). 이름만 주면 그 이름이 들어간 선수의 카드 전부. teamcolor_id 면 그 팀컬러가
-        적용되는 카드만. skills 는 같이 받을 능력치 칸(STAT_CODES 중 최대 4개). price_max 는 +1 강화 가격 상한(BP).
-        height · weight = (최소, 최대) cm · kg — 같은 OVR 이 200장을 넘을 때 더 잘게 나눠 묻는 데 쓴다.
-        조건 검색: league_id · team_id(club_history=True 면 클럽 경력까지) · nation_id · traits(보유 특성 이름 최대 3개) ·
-        foot(FOOT: 1 오른발 · 2 왼발) · weak_foot(약발 1~5) · skill_moves(개인기 별 1~6) · reputation(명성 1~5) · 급여."""
-        form = dict.fromkeys(LIST_FIELDS, "")
-        form.update({"strPlayerName": name, "n4PageNo": "1", "strOrderby": ORDER_BY.get(order, "")})
-        form.update({f"strSkill{i}": code for i, code in enumerate(skills[:4], start=1)})
-        if teamcolor_id:
-            form["teamcolorid"] = str(teamcolor_id)
-        if ovr_max:
-            form["n4OvrMax"] = str(ovr_max)
-        if seasons:
-            form["strSeason"] = "," + ",".join(str(s) for s in seasons) + ","
-        if positions:
-            form["strPosition"] = "," + ",".join(POSITION_FILTER[p] for p in positions) + ","
-        if team_id:
-            form["n4TeamId"] = str(team_id)
-        if nation_id:
-            form["n4NationId"] = str(nation_id)
-        if ovr_min:
-            form["n4OvrMin"] = str(ovr_min)
-        if price_max:
-            form["n8PlayerGrade1Max"] = str(price_max // 1000)   # 화면의 가격 범위는 1,000 BP 단위
-        for field, bounds in (("Height", height), ("Weight", weight)):
-            if bounds:
-                form[f"n4{field}Min"], form[f"n4{field}Max"] = str(bounds[0]), str(bounds[1])
-        form["n1History"] = "0" if club_history else "1"   # 0 = 클럽 경력까지 (화면의 '클럽 경력' 체크)
-        extra = {"n4LeagueId": league_id, "preferredfoot": foot, "n1FootAblity": weak_foot, "n1SkillMove": skill_moves,
-                 "n1InterationalRep": reputation, "n4SalaryMin": pay_min, "n4SalaryMax": pay_max}
-        form.update({key: str(value) for key, value in extra.items() if value})
-        form.update({f"strTrait{i}": trait for i, trait in enumerate(traits[:3], start=1)})
-        return parse_player_list(self._post(LIST_PATH, form), skills[:4])
+    def player_list(self, name: str = "", **filters) -> list[dict]:
+        """선수 검색 (한 번에 최대 200장) — 조건은 list_form 을 본다."""
+        return search_cards(self, name, **filters)
 
     def price(self, spid: int, grade: int) -> dict | None:
         """카드 1장 · 강화 1단계의 현재가와 일별 시세."""
@@ -585,20 +616,14 @@ class DatacenterClient:
         return parse_teams(self._post(SEARCH_PAGE, {}, method="GET"))
 
     def search_options(self) -> dict:
-        return parse_search_options(self._post(SEARCH_PAGE, {}, method="GET"))
+        return fetch_search_options(self)
 
     def daily_stats(self, order: str = "ATTACKPOINT", mode: str = "official", day: str | None = None,
                     ranks: tuple[int, int] = (1, 10000)) -> list[dict]:
-        """데일리 기록 — 그날 랭커가 쓴 카드의 기록 TOP 18 (order = DAILY_STATS 의 키)."""
-        return parse_daily_stats(self._post(DAILY_STAT_PATH, {"strDate": day or daily_date(), "strOrderBy": order,
-                                                              "n1Type": MODES[mode], "n4StartRanking": ranks[0],
-                                                              "n4EndRanking": ranks[1]}, method="GET"))
+        return fetch_daily_stats(self, order, mode, day, ranks)
 
     def formations(self, mode: str = "official", day: str | None = None) -> list[dict]:
-        """데일리 차트 — 랭커 포메이션 이용률 (상위 10개)."""
-        return parse_formations(self._post(FORMATION_PATH, {"strDate": day or daily_date(), "strType": "usage",
-                                                            "n1Type": MODES[mode], "n4StartRanking": 1,
-                                                            "n4EndRanking": 10000}, method="GET"))
+        return fetch_formations(self, mode, day)
 
     def teamcolors(self) -> list[dict]:
         return parse_teamcolors(self._post(TEAMCOLOR_PAGE, {}, method="GET"))

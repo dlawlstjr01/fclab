@@ -513,6 +513,41 @@ check([p_["name"] for p_ in picks] == ["빠른", "느린"] and "속력 +40" in p
 check(round(_odds(7, 8, 100.0, None, protect=True)["mean"], 1) == round(1 / 0.07, 1)
       and _odds(7, 8, 100.0)["mean"] > 1000,
       "강화 시뮬: 등급 보호(실패해도 그대로)면 +7→+8 평균 14.3번, 공식 복구표대로 내려가면 평균 4,000번 넘게")
+record = ui_parts.grow_record({"7": {"tries": 28, "ok": 2, "crit": 0, "fail": 26},
+                                "3": {"tries": 100, "ok": 64, "crit": 0, "fail": 36},
+                                "1": {"tries": 30, "ok": 30, "crit": 0, "fail": 0}}, 7, 100.0)
+order = [record.index(s) for s in ("+7 → +8", "+1 ~ +4 다시 올리기", "모든 시도 합계")]
+check(order == sorted(order) and "<b>7.1%</b>" in record and "<b>72.3%</b>" in record and "<b>60.8%</b>" in record,
+      "강화 기록: 노리는 단계(+7 → +8 7.1%)가 맨 위, 실패로 내려가 다시 올린 시도(72.3%)는 따로, 모든 시도 합계(60.8%)는 맨 아래 "
+      "— 전체 성공 비율 하나만 보이면 쉬운 단계가 섞여 69% 처럼 보였다")
+
+
+class PostOnly:   # 예전 모습의 데이터센터 창구 — 앱을 켠 채 코드가 바뀌면 Streamlit 이 들고 있는 객체 (_post 만 믿는다)
+    def __init__(self, pages):
+        self.pages, self.calls = pages, []
+
+    def _post(self, path, data, method="POST"):
+        self.calls.append((path, dict(data)))
+        return self.pages[path]
+
+
+import data_prep.datacenter as dcmod  # noqa: E402
+from services.daily import DailyBoard  # noqa: E402
+from services.finder import CardFinder  # noqa: E402
+
+list_html = ('<div id="area_playerunit_163000001"><div class="name">사노 고다이</div>'
+             '<span class="pay">30</span><span class="skillData_163000001">120</span></div>')
+old_client = PostOnly({dcmod.SEARCH_PAGE: search_html, dcmod.LIST_PATH: list_html,
+                       dcmod.DAILY_STAT_PATH: daily_html, dcmod.FORMATION_PATH: ""})
+finder_db = FcDb(tmp / "finder.db")
+finder = CardFinder(old_client, finder_db, fake_cat, SimpleNamespace(all=lambda: []))
+found_rows = finder.search(parse_rules("일본 출신 미드필더", finder.options(), [], {}))
+sent = old_client.calls[-1][1]
+board = DailyBoard(old_client, finder_db)
+check(found_rows and found_rows[0]["spid"] == 163000001 and sent["n4NationId"] == "163"
+      and "17,18,19" in sent["strPosition"] and ",16," in sent["strPosition"] and board.stats("ATTACKPOINT", wait=True)["rows"][0]["spid"] == 877013128,
+      "조건 검색 · 데일리 기록은 창구의 _post 만 쓴다 — 앱을 켠 채 코드가 바뀌어 예전 창구 객체가 남아 있어도 된다 "
+      "('DatacenterClient' object has no attribute 'search_options' 가 나던 것)")
 row_scale = ui_parts.ability_compare(
     {"shown": {"ovr": 124, "summary": {"스피드": 118}, "stats": {"속력": 118, "가속력": 120}}, "base": {}, "mark": "", "note": "",
      "name": "A", "position": "CF"},
@@ -990,7 +1025,8 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
           f"강화 시뮬: 지금 등급 고정(등급 보호) + '+{before[0] + 1} 까지' → 실패해도 내려가지 않고 첫 성공에 멈춘다 ({goal['tries']}번)")
     steps = run_state["steps"]
     check(str(before[0]) in steps and steps[str(before[0])]["ok"] + steps[str(before[0])]["crit"] >= 1
-          and any('class="fc-growrec steps"' in m.value and "이론 확률" in m.value for m in at.markdown),
+          and any('class="fc-growrec"' in m.value and "이론 확률" in m.value and f"<td>+{before[0]} → +{before[0] + 1}</td>" in m.value
+                  for m in at.markdown),
           "강화 시뮬: 단계(+N → +N+1)마다 시도 · 성공 · 실패 · 성공 비율과 이론 확률 표 (전체 비율은 쉬운 단계가 섞여 높게 보여서)")
     at.button(key="nav_players").click().run()
     check(not at.exception and any('class="fc-prow"' in m.value for m in at.markdown) or not at.session_state.get("pl_page") is None,

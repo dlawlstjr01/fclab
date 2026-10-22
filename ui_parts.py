@@ -465,7 +465,10 @@ div.st-key-gr_actions button p, div[class*="st-key-again_"] button p {{ white-sp
   70% {{ opacity: 1; }} 100% {{ opacity: 0; transform: translate(-50%, -70%) scale(1); }} }}
 @media (prefers-reduced-motion: reduce) {{ .fc-growstage .fx, .fc-growstage .fxlabel {{ display: none; }}
   .fc-growstage .pc {{ animation: none !important; }} }}
-.fc-growrec.steps td:first-child {{ font-weight: 800; }}
+.fc-growrec td:first-child {{ font-weight: 800; white-space: nowrap; }}
+.fc-growrec tr.back td, .fc-growrec tr.sum td {{ color: {t['muted']}; font-size: 12.5px; }}
+.fc-growrec tr.back td b, .fc-growrec tr.sum td b {{ color: {t['ink2']}; }}
+.fc-growrec tr.main td b {{ color: {ACCENT}; }}
 /* 비교: 두 카드 능력치 나란히 — A(파랑)는 가운데에서 왼쪽으로, B(주황)는 오른쪽으로 막대, 높은 쪽 숫자에 색과 차이 */
 .fc-abcmp {{ border: 1px solid {t['border']}; border-radius: 14px; padding: 10px 14px; background: {t['surface']}; }}
 .fc-abcmp .hd, .fc-abcmp .r {{ display: grid; grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr); align-items: center;
@@ -795,28 +798,45 @@ def grow_stage(card: str, fx: dict | None) -> str:
             f'</div><div class="fxlabel {kind}">{label}</div></div>')
 
 
-def grow_steps(steps: dict, boost: float) -> str:
-    """단계별 기록 — 단계(+N → +N+1)마다 시도 · 성공 · 실패 · 성공 비율과 이론 확률(공식 확률 × 게이지).
-    전체 성공 비율은 쉬운 단계(+1 → +2 100% 등)가 섞여 높게 보이므로 단계마다 따로 본다."""
+def grow_record(steps: dict, start: int, boost: float) -> str:
+    """강화 기록 — 단계(+N → +N+1)마다 시도 · 성공 · 실패 · 성공 비율 · 이론 확률(공식 확률 × 게이지).
+
+    지금 등급(start)부터 위의 단계를 먼저 — 노리는 단계의 성공 비율이 바로 보이게. 실패로 등급이 start 아래로 내려가
+    다시 올린 시도는 한 줄로 묶는다: 쉬운 단계(+1 → +2 100% · +2 → +3 81% …)의 성공이 섞이면 전체 성공 비율이
+    부풀어 보인다 (예: +7 → +8 을 노렸는데 전체 69%). 맨 아래는 모든 시도의 합계."""
     from data_prep.enhance import success_rate   # ui_parts 는 화면 부품만 — 확률은 여기서만 빌린다
 
+    def cells(s: dict) -> tuple[int, int, int]:
+        return s["tries"], s["ok"] + s["crit"], s["fail"]
+
+    def row(label: str, tries: int, succ: int, fail: int, theory: str, cls: str = "", crit: int = 0) -> str:
+        ratio = f"{succ / tries * 100:.1f}%" if tries else "-"
+        if cls == "main" and 0 < tries < 20:   # 시도가 적으면 이론 확률과 크게 다를 수 있다
+            ratio += " <small>표본 적음</small>"
+        crit_note = f" <small>(크리티컬 {crit})</small>" if crit else ""
+        number, _, note = ratio.partition(" ")
+        return (f'<tr class="{cls}"><td>{label}</td><td>{tries:,}</td><td>{succ:,}{crit_note}</td><td>{fail:,}</td>'
+                f'<td><b>{number}</b> {note}</td><td>{theory}</td></tr>')
+
     rows = []
-    for grade in sorted(steps, key=int):
-        s = steps[grade]
-        g = int(grade)
-        succ = s["ok"] + s["crit"]
-        rows.append(f'<tr><td>+{g} → +{g + 1}</td><td>{s["tries"]:,}</td><td>{succ:,}</td><td>{s["fail"]:,}</td>'
-                    f'<td><b>{succ / s["tries"] * 100:.1f}%</b></td><td>{success_rate(g, boost):.2f}%</td></tr>')
-    return ('<table class="fc-growrec steps"><thead><tr><th>단계</th><th>시도</th><th>성공</th><th>실패</th><th>성공 비율</th>'
+    for grade in sorted((int(g) for g in steps if int(g) >= start), reverse=True):
+        s = steps[str(grade)]
+        tries, succ, fail = cells(s)
+        rows.append(row(f"+{grade} → +{grade + 1}", tries, succ, fail, f"{success_rate(grade, boost):.2f}%", "main", s["crit"]))
+    if not rows:
+        rows.append(f'<tr class="main"><td>+{start} → +{start + 1}</td><td colspan="5">아직 시도하지 않았습니다</td></tr>')
+    below = sorted(int(g) for g in steps if int(g) < start)
+    if below:
+        tries = sum(steps[str(g)]["tries"] for g in below)
+        succ = sum(steps[str(g)]["ok"] + steps[str(g)]["crit"] for g in below)
+        rows.append(row(f"+{below[0]} ~ +{below[-1] + 1} 다시 올리기", tries, succ, tries - succ,
+                        "실패로 내려간 등급", "back"))
+    total = [cells(s) for s in steps.values()]
+    if len(steps) > 1:
+        rows.append(row("모든 시도 합계", sum(c[0] for c in total), sum(c[1] for c in total), sum(c[2] for c in total),
+                        "단계가 섞임", "sum"))
+    return ('<table class="fc-growrec"><thead><tr><th>단계</th><th>시도</th><th>성공</th><th>실패</th><th>성공 비율</th>'
             '<th>이론 확률</th></tr></thead><tbody>' + "".join(rows) + "</tbody></table>")
-
-
-def grow_record(tries: int, ok: int, crit: int, fail: int) -> str:
-    """강화 기록 표 — 전체 · 성공 · 실패 · 성공 비율 (공식 시뮬레이터처럼)."""
-    ratio = f"{(ok + crit) / tries * 100:.0f}%" if tries else "0%"
-    succ = f"{ok + crit}" + (f" <small>(크리티컬 {crit})</small>" if crit else "")
-    return (f'<table class="fc-growrec"><thead><tr><th>전체</th><th>성공</th><th>실패</th><th>성공 비율</th></tr></thead>'
-            f'<tbody><tr><td>{tries:,}</td><td>{succ}</td><td>{fail:,}</td><td>{ratio}</td></tr></tbody></table>')
 
 
 def foot_text(foot: dict | None) -> str:
