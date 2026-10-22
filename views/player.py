@@ -64,32 +64,32 @@ def _card_section(ctx: Ctx, player: dict) -> None:
 
 def _partner_section(ctx: Ctx, player: dict) -> None:
     """🤝 짝 추천 — 이 카드를 자기 포지션에 쓸 때 옆(가운데 자리) · 반대쪽(측면)에 둘 카드. 골키퍼는 한 명이라 없다.
-    랭커가 그 자리에 많이 쓰는 카드(데일리 차트) 중 이 카드의 약한 능력치를 메워 주는 카드, 혼자 쓰는 자리면 그렇다고 적는다."""
+    랭커가 그 자리에 많이 쓰는 카드(데일리 차트) 중 이 카드의 약한 능력치를 메워 주는 카드, 혼자 쓰는 자리면 그렇다고 적는다.
+    데일리 차트를 받지 못하면(데이터센터가 꺼졌거나 실패) 랭커 분석 카드(넥슨 Open API 기록)에서 고른다 — 칸이 비지 않게."""
     info = ctx.cards.get([player["spid"]]).get(player["spid"]) or {}
     basics = card_basics(ctx, [player["spid"]]).get(player["spid"], {})
-    position = info.get("position") or basics.get("position") or next(iter(player.get("positions") or []), None)
+    ranker_position = (player.get("ranker") or {}).get("position")
+    position = info.get("position") or basics.get("position") or ranker_position or next(iter(player.get("positions") or []), None)
     plan = pair_plan(position)
-    if plan is None or not ctx.daily.enabled:
+    if plan is None:   # 골키퍼 (혼자 서는 자리)
         return
     where = f"반대쪽 {plan['partner']}" if plan["kind"] == "mirror" else f"같은 자리({plan['group']})의 다른 한 명"
     st.markdown(f'<div class="fc-section">🤝 짝 추천 — {escape(position)} 에 쓸 때<small>{escape(where)} · 랭커가 많이 쓰는 카드 중 '
-                '이 카드의 약한 능력치를 메워 주는 카드 · FC 온라인 데이터센터 데일리 차트</small></div>', unsafe_allow_html=True)
-    usage = ctx.daily.usage(plan["partner"])
-    forms = ctx.daily.formations() if plan["kind"] == "central" else {"rows": []}
-    if usage is None or forms is None:
-        if ctx.daily.pending():
-            daily_wait(ctx)
-        else:
-            st.caption("데일리 차트를 불러오지 못했습니다. 잠시 뒤 다시 열어 주세요.")
+                '이 카드의 약한 능력치를 메워 주는 카드</small></div>', unsafe_allow_html=True)
+    usage = ctx.daily.usage(plan["partner"]) if ctx.daily.enabled else None
+    forms = (ctx.daily.formations() if ctx.daily.enabled else None) if plan["kind"] == "central" else {"rows": []}
+    if (usage is None or forms is None) and ctx.daily.enabled and ctx.daily.pending():
+        daily_wait(ctx)
         return
-    if plan["kind"] == "central":
+    source = f"데일리 차트 {usage['date']}" if usage else "랭커 분석 카드 (넥슨 Open API — 데일리 차트를 받지 못해서)"
+    rows = usage["rows"] if usage else ranker_partners(ctx, plan)
+    if plan["kind"] == "central" and forms:
         share, names = solo_share(plan["group"], forms["rows"])
         if share is not None and share >= SOLO_SHARE:
             st.markdown(f'<div class="fc-pair">{solo_text(escape(player["name"]), plan["group"], share, names)}</div>',
                         unsafe_allow_html=True)
         elif share is not None:
             st.caption(f"랭커 포메이션의 {(1 - share) * 100:.0f}% 가 {plan['group']}을(를) 두 명 이상 세웁니다 — 짝이 있으면 좋은 자리입니다.")
-    rows = usage["rows"]
     picks = recommend({"spid": player["spid"], "pid": player["pid"]}, info, plan, rows,
                       ctx.db.card_stats([r["spid"] for r in rows] + [player["spid"]]))
     if not picks:
@@ -97,7 +97,18 @@ def _partner_section(ctx: Ctx, player: dict) -> None:
         return
     shown = [get_player(ctx, str(p["spid"])) for p in picks]
     tile_grid(ctx, shown, key="pair", cols=3, reasons={s["player_id"]: p["reason"] for s, p in zip(shown, picks)})
-    st.caption(f"데일리 차트 {usage['date']} · 능력치는 모은 능력치(+1강) 기준 — 아직 모으지 못한 카드는 랭커 이용 비율로만 고릅니다.")
+    st.caption(f"{source} · 능력치는 모은 능력치(+1강) 기준 — 아직 모으지 못한 카드는 랭커 이용으로만 고릅니다.")
+
+
+def ranker_partners(ctx: Ctx, plan: dict) -> list[dict]:
+    """데일리 차트를 받지 못했을 때의 짝 후보 — 랭커 분석 카드 중 짝 자리에 쓰인 카드 (랭커 경기 수 많은 순 16장)."""
+    from data_prep.datacenter import USAGE_GROUP
+
+    members = {plan["partner"]} if plan["kind"] == "mirror" else {p for p, g in USAGE_GROUP.items() if g == plan["partner"]}
+    pool = [p for p in ctx.players if p.get("ranker") and p["ranker"].get("position") in members]
+    pool.sort(key=lambda p: -p["ranker"]["match_count"])
+    return [{"spid": p["spid"], "name": p["name"], "share": float(p["ranker"]["match_count"]), "grade": None,
+             "note": f"랭커 {p['ranker']['match_count']}경기"} for p in pool[:16]]
 
 
 @st.fragment(run_every=2)
@@ -144,7 +155,7 @@ def bonus_controls(ctx: Ctx, player: dict, info: dict, compact: bool = False) ->
     if st.session_state.get(adapt_key) not in (None, *ADAPT_LEVELS):   # 예전에 고른 2 · 3 · 4 (지금은 없는 단계)
         st.session_state[adapt_key] = ADAPT_LEVELS[-1] if st.session_state[adapt_key] > 1 else ADAPT_LEVELS[0]
     adapt = a_col.selectbox("적응도", ADAPT_LEVELS, key=adapt_key, format_func=lambda a: f"+{a}",
-                            help="적응도는 1 · 5 두 단계 — 5 는 모든 능력치 +4 (초록 +4 로 보인다)")
+                            help="적응도는 1 · 5 두 단계 — 5 는 모든 능력치 +4 (능력치 숫자에 바로 들어가고 초록 +N 에는 넣지 않는다)")
     enhance_options = [(0, 0)] + [(i, lv["level"]) for i in enhance_ids
                                   for lv in (details.get(i) or {}).get("levels", [])
                                   if (details.get(i) or {}).get("min_grade") and details[i]["min_grade"] <= grade]
@@ -184,7 +195,8 @@ def bonus_controls(ctx: Ctx, player: dict, info: dict, compact: bool = False) ->
         st.caption("강화 팀컬러 조건: " + " · ".join(f"**{n} {g}강+**" if g <= grade else f"{n} {g}강+" for g, n in conditions)
                    + f" — 지금 +{grade}강은 굵은 것만 고를 수 있습니다."
                    + ("" if compact else " 데이터센터에서 보이는 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · 백금빛 Lv.2 +9 는 팀컬러(+3 · +4 · +5)에"
-                                         " 적응도 5(+4)를 더한 값입니다 — 적응도 +5 를 함께 고르면 초록 +N 이 같아집니다."))
+                                         " 적응도 5(+4)를 더한 값입니다 — 여기서는 적응도가 능력치 숫자에 바로 들어가고, 초록 +N 은"
+                                         " 팀컬러로 오른 만큼(+3 · +4 · +5)입니다."))
     effects = ([level_effects(*enhance)] if enhance[0] else []) + ([level_effects(pick["id"], level)] if pick else []) \
         + ([level_effects(relation["id"], None)] if relation else [])
     extras = ([f"적응도 +{adapt}"] if adapt > 1 else []) + ([enhance_label(enhance).split(" (")[0]] if enhance[0] else []) \
@@ -217,11 +229,11 @@ def boosted(ctx: Ctx, player: dict, info: dict, pick: dict) -> dict:
         computed = ctx.cards.exact(spid, pick["combo"])
         if computed:
             shown, exact = {**computed, "exact": True}, True
-    # 초록 +N 의 기준은 강화까지 — 강화만 바꾸면 +N 이 붙지 않고(강화분은 숫자에), +N 은 그 위에 적응도(5 = +4) · 팀컬러(강화 ·
-    # 소속(특정 능력치만 오르는 것도 그 능력치에) · 특성)로 더 오른 만큼. 데이터센터는 강화를 바꾸면 적응도 5 와 그 등급의 가장 높은
-    # 강화 팀컬러를 함께 골라(n1Change=1) 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · 백금빛 Lv.2 +9 로 보이는데, 이것은 팀컬러 +3/+4/+5 에
-    # 적응도 +4 를 더한 값이다 (2026-10-22 데이터센터 계산으로 확인) — 여기서는 적응도 +5 와 그 팀컬러를 고르면 같은 +N.
-    base = bonus_stats(info, grade, 1, [])
+    # 초록 +N 의 기준은 강화 · 적응도까지 — 강화 · 적응도는 능력치 숫자에 바로 들어가고(+N 이 붙지 않는다), +N 은 그 위에
+    # 팀컬러(강화 · 소속(특정 능력치만 오르는 것도 그 능력치에) · 특성)로 더 오른 만큼. 데이터센터는 강화를 바꾸면 적응도 5 와
+    # 그 등급의 가장 높은 강화 팀컬러를 함께 골라(n1Change=1) 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · 백금빛 Lv.2 +9 로 보이는데, 이것은
+    # 팀컬러 +3/+4/+5 에 적응도 +4 를 더한 값이다 (2026-10-22 데이터센터 계산으로 확인).
+    base = bonus_stats(info, grade, adapt, [])
     focus: dict[str, int] = {}   # 팀컬러가 '전체 능력치' 말고 따로 올려 주는 능력치 (예: 바르셀로나 Lv.4 짧은 패스 +3 · 볼 컨트롤 +3)
     for effect in pick["effects"]:
         for name, value in effect_bonus(effect or [])[1].items():
@@ -286,8 +298,8 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         f'<div class="fc-panel"><div class="title">클럽 경력</div>{ui_parts.club_history(info.get("clubs") or [])}</div>'
         "</div>", unsafe_allow_html=True)
     right.markdown(
-        f'<div class="fc-stack"><div class="fc-panel"><div class="title">능력치<small>{escape(note)} · 강화분은 숫자에 · '
-        f'초록 +N 은 적응도 · 팀컬러(강화 · 소속 · 특성)로 더 오른 만큼'
+        f'<div class="fc-stack"><div class="fc-panel"><div class="title">능력치<small>{escape(note)} · 강화 · 적응도는 숫자에 바로 · '
+        f'초록 +N 은 팀컬러(강화 · 소속 · 특성)로 더 오른 만큼'
         f'{" · 초록 줄은 팀컬러가 따로 올려 주는 능력치" if focus else ""}</small></div>'
         f'{ui_parts.ability_table(shown.get("stats") or {}, shown.get("summary") or {}, 0, base["stats"], focus)}'
         "</div></div>", unsafe_allow_html=True)

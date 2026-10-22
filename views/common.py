@@ -190,15 +190,29 @@ def _teamcolors(_settings, _db) -> TeamColorService:
     return TeamColorService(client, _db, _settings.market_enabled, clubs=clubs)
 
 
-@st.cache_resource
-def _finder(_settings, _db, _catalog) -> CardFinder:
-    """조건 검색 (앱 프로세스에 하나) — 검색 화면의 목록(국적 · 리그 · 클럽 · 특성)과 레전드 선수를 한 번 읽어 둔다."""
+def code_version(*files: str) -> str:
+    """그 파일들이 마지막으로 바뀐 때 — cache_resource 의 키에 넣어, 앱을 켠 채 코드가 바뀌면 새 객체를 만들게 한다.
+    cache_resource 는 함수 코드가 그대로면 예전 객체를 계속 돌려준다 — 서비스 코드만 바뀌면 화면은 새 코드인데 객체는 예전
+    코드라 'object has no attribute …' 가 났다 (예: 'DatacenterClient' object has no attribute 'search_options')."""
+    stamps = []
+    for name in files:
+        try:
+            stamps.append(str((config.BASE_DIR / name).stat().st_mtime_ns))
+        except OSError:
+            stamps.append("-")
+    return ":".join(stamps)
+
+
+@st.cache_resource(max_entries=1)
+def _finder(_settings, _db, _catalog, code: str) -> CardFinder:
+    """조건 검색 (앱 프로세스에 하나 · 코드가 바뀌면 새로) — 검색 화면의 목록(국적 · 리그 · 클럽 · 특성)과 레전드 선수를
+    한 번 읽어 둔다. 데이터센터 창구는 _post 만 쓴다 (창구가 예전 객체여도 된다)."""
     return CardFinder(_datacenter(_settings), _db, _catalog, _teamcolors(_settings, _db))
 
 
-@st.cache_resource
-def _daily(_settings, _db) -> DailyBoard:
-    """데일리 기록 · 차트 (앱 프로세스에 하나) — 하루에 한 번 받아 SQLite 에 둔다."""
+@st.cache_resource(max_entries=1)
+def _daily(_settings, _db, code: str) -> DailyBoard:
+    """데일리 기록 · 차트 (앱 프로세스에 하나 · 코드가 바뀌면 새로) — 하루에 한 번 받아 SQLite 에 둔다."""
     return DailyBoard(_datacenter(_settings), _db)
 
 
@@ -275,7 +289,9 @@ def boot() -> Ctx:
     return Ctx(settings, players, {p["player_id"]: p for p in players}, by_pid, catalog, nexon, model, store,
                collector, graph, AiCache(db), db, prefetcher, Favorites(db), theme, curated_ids,
                _market(settings, db, catalog), _cards(settings, db), _datacenter(settings), _teamcolors(settings, db),
-               _stats(settings, db), _finder(settings, db, catalog), _daily(settings, db))
+               _stats(settings, db),
+               _finder(settings, db, catalog, code_version("services/finder.py", "data_prep/datacenter.py")),
+               _daily(settings, db, code_version("services/daily.py", "data_prep/datacenter.py")))
 
 
 # ── 이동 · 브라우저 뒤로가기 ─────────────────────────────────────────

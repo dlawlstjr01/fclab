@@ -548,6 +548,44 @@ check(found_rows and found_rows[0]["spid"] == 163000001 and sent["n4NationId"] =
       and "17,18,19" in sent["strPosition"] and ",16," in sent["strPosition"] and board.stats("ATTACKPOINT", wait=True)["rows"][0]["spid"] == 877013128,
       "조건 검색 · 데일리 기록은 창구의 _post 만 쓴다 — 앱을 켠 채 코드가 바뀌어 예전 창구 객체가 남아 있어도 된다 "
       "('DatacenterClient' object has no attribute 'search_options' 가 나던 것)")
+from services.finder import members as find_members  # noqa: E402
+from views.common import code_version  # noqa: E402
+from views.ranking import _applied_ovr  # noqa: E402
+
+probe_file = tmp / "probe.py"
+probe_file.write_text("x = 1", encoding="utf-8")
+with patch.object(config, "BASE_DIR", tmp):
+    before_code = code_version("probe.py")
+    os.utime(probe_file, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
+    after_code = code_version("probe.py")
+check(before_code != after_code and code_version("없는파일.py") == "-",
+      "서비스 코드가 바뀌면 조건 검색 · 데일리 기록 객체를 새로 만든다 (cache_resource 키에 파일이 바뀐 때를 넣는다 — 켜진 앱이 "
+      "예전 객체를 계속 써서 'object has no attribute' 가 나던 것)")
+
+
+class FakeFinder:   # 시즌 셋을 한 번에 물으면 200장(잘림), 시즌마다 물으면 그 시즌의 카드
+    def __init__(self):
+        self.asked = []
+
+    def search(self, f):
+        self.asked.append(f.seasons)
+        if len(f.seasons) > 1:
+            return [{"spid": 866000000 + i} for i in range(200)]
+        return [{"spid": f.seasons[0] * 1_000_000 + 7}]
+
+
+fake_finder = FakeFinder()
+found = find_members(fake_finder, Filters(nation="일본"), {866: 3, 101: 2, 300: 1})
+check(found["complete"] and fake_finder.asked == [(101, 300, 866), (866,), (101,), (300,)]
+      and 101000007 in found["spids"] and 7 in found["pids"],
+      "상세 조건 거르기: 한 번에 물어 200장에서 잘리면 카드가 많은 시즌부터 따로 묻는다 (국적 · 클럽 팀컬러는 선수 단위로도 맞춘다)")
+tc_level = {"level": 4, "count": 11, "effects": ["전체 능력치 +4", "볼 컨트롤 +3"]}
+enh_level = {"level": 2, "count": 8, "effects": ["전체 능력치 +4"]}
+cond = {"grade": 5, "enh_min": 8, "enh": {"name": "금빛 물결"}, "enh_level": enh_level, "tc": {"name": "첼시"},
+        "tc_level": tc_level}
+check(_applied_ovr(cond, 120, True)[0] == 120 + GRADE_OVR[8] + 4 + 4 and _applied_ovr(cond, 120, False)[0] == 120 + GRADE_OVR[8] + 4
+      and _applied_ovr(None, 120, True) == (120, "") and _applied_ovr(cond, None, True) == (None, ""),
+      "랭커 분석 적용 OVR: 강화 팀컬러 조건(금빛 = 8강 이상)에 맞춰 등급을 올리고 강화 팀컬러 · 팀컬러(그 팀컬러 카드만) 전체 능력치를 더한다")
 row_scale = ui_parts.ability_compare(
     {"shown": {"ovr": 124, "summary": {"스피드": 118}, "stats": {"속력": 118, "가속력": 120}}, "base": {}, "mark": "", "note": "",
      "name": "A", "position": "CF"},
@@ -810,8 +848,9 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     at.button(key=f"pc_grade_{a['spid']}__8").click().run()
     at.selectbox(key=f"pc_adapt_{b['spid']}").select(5).run()
     check(not at.exception and f"<b>{100 + GRADE_OVR[8]}</b>" in cmp_html()
-          and '<b>108</b><small class="up">+4</small>' in cmp_html() and '<div class="a win">' in cmp_html(),
-          f"비교: A 를 8강 → 대표 OVR {100 + GRADE_OVR[8]}, B 를 적응도 5 → 108 · 초록 +4 (카드마다 강화 · 적응도 · 팀컬러를 골라 비교)")
+          and '<b>108</b>' in cmp_html() and '<b>108</b><small class="up">' not in cmp_html() and '<div class="a win">' in cmp_html(),
+          f"비교: A 를 8강 → 대표 OVR {100 + GRADE_OVR[8]}, B 를 적응도 5 → 108 (적응도는 숫자에만 · 초록 +N 은 팀컬러) "
+          "— 카드마다 강화 · 적응도 · 팀컬러를 골라 비교")
     at.button(key="make_compare").click().run()
     check(f"compare:{a['player_id']}:{b['player_id']}" in at.session_state["results"], "AI 커리어 비교(특화 기능)")
     at.button(key="cmp_b_pick_again").click().run()
@@ -960,23 +999,24 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
           and at.selectbox(key=f"pc_adapt_{spid_t}").options == ["+1", "+5"],
           f"선수 상세: 강화만 8강으로 → 포지션 OVR 90+{GRADE_OVR[8]}, 초록 +N 없음 (강화분은 숫자에) · 적응도는 1 · 5 두 단계만")
     at.selectbox(key=f"pc_adapt_{spid_t}").select(5).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html(),
-          f"선수 상세: 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 초록 +4 (적응도로 오른 만큼)")
+    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up"' not in grid_html(),
+          f"선수 상세: 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 초록 +N 없음 (적응도는 능력치 숫자에만)")
     enh = at.selectbox(key=f"pc_enh_{spid_t}_8")
     enh.select_index(next(i for i, label in enumerate(enh.options) if "금빛 물결 Lv.2" in label)).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4 + 4}</b>" in grid_html() and 'class="up">+8<' in grid_html()
-          and any("금빛 Lv.2 +8" in c.value for c in at.caption),
-          f"선수 상세: 거기에 금빛 물결 Lv.2 → OVR {90 + GRADE_OVR[8] + 8}, 초록 +8 = 적응도 4 + 금빛 4 (데이터센터 기본값 +8 과 같다)")
+    check(f"<b>{90 + GRADE_OVR[8] + 4 + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
+          and 'class="up">+8<' not in grid_html() and any("금빛 Lv.2 +8" in c.value for c in at.caption),
+          f"선수 상세: 거기에 금빛 물결 Lv.2 → OVR {90 + GRADE_OVR[8] + 8} (데이터센터 기본값 +8 과 같다), 초록 +4 = 팀컬러만 "
+          "(적응도는 숫자에만)")
 
     def ability_html() -> str:
         return next((m.value for m in at.markdown if 'class="fc-abil"' in m.value), "")
 
     at.selectbox(key=f"pc_tc_{spid_t}").select_index(1).run()
     short = 80 + GRADE_OVR[8] + 4 + 4 + 3
-    check(f">{short}</b><small class=\"up\">+{short - 80 - GRADE_OVR[8]}<" in ability_html()
+    check(f">{short}</b><small class=\"up\">+{short - 80 - GRADE_OVR[8] - 4}<" in ability_html()
           and f"<b>{90 + GRADE_OVR[8] + 8}" in grid_html() and 'class="it focus" title="팀컬러가 따로 올려 주는 능력치 +3"' in ability_html(),
-          f"선수 상세: 소속 팀컬러 '짧은 패스 +3' → 짧은 패스 {short}, 초록 +{short - 80 - GRADE_OVR[8]} = 적응도 4 + 금빛 4 + 소속 3 "
-          "(특정 능력치만 오르는 효과도 그 능력치의 +N 에)")
+          f"선수 상세: 소속 팀컬러 '짧은 패스 +3' → 짧은 패스 {short}, 초록 +{short - 80 - GRADE_OVR[8] - 4} = 금빛 4 + 소속 3 "
+          "(특정 능력치만 오르는 효과도 그 능력치의 +N 에, 적응도는 숫자에만)")
     check(any('★★★★<span class="star-up"' in m.value and ">★★</span>" in m.value for m in at.markdown),
           "선수 상세: 개인기 4성 카드를 8강으로 → 5 · 8강 별 2개를 초록으로 더해 6성")
     check(any('class="fc-qa-head"' in m.value for m in at.markdown), "선수 상세: Q&A · AI 리포트 · 근거 문서를 눈에 띄는 상자로 (제목 · 근거 기반 표시)")

@@ -313,3 +313,21 @@ class CardFinder:
         elif f.sort == "price":
             rows = sorted(rows, key=lambda r: -((r.get("prices") or {}).get(1) or (r.get("prices") or {}).get("1") or 0))
         return rows
+
+
+MEMBER_SEASONS = 8   # 200장에서 잘렸을 때 따로 물을 시즌 수 (볼 카드가 많은 시즌부터)
+
+
+def members(finder: CardFinder, f: Filters, seasons: dict[int, int]) -> dict:
+    """조건에 맞는 카드 묶음 — 이미 있는 카드 목록(랭커 분석 · 데일리 기록)을 조건으로 거를 때.
+    seasons = {시즌: 그 시즌에서 거를 카드 수}. 모든 시즌을 한 번에 묻고, 200장에서 잘렸으면 카드가 많은 시즌부터
+    MEMBER_SEASONS 개를 따로 묻는다. 돌려주는 값: {"spids": 맞는 카드, "pids": 그 카드의 선수, "complete": 빠짐없이 봤나}.
+    국적 · 클럽(경력) · 클럽/국가 팀컬러는 선수마다 정해지므로 pids 로 같은 선수의 다른 시즌 카드도 맞는다고 볼 수 있다."""
+    found = finder.search(replace(f, seasons=tuple(sorted(seasons))))
+    complete = len(found) < PAGE_LIMIT
+    if not complete:
+        order = sorted(seasons, key=lambda s: -seasons[s])
+        for season in order[:MEMBER_SEASONS]:
+            found = found + finder.search(replace(f, seasons=(season,)))
+        complete = len(order) <= MEMBER_SEASONS
+    return {"spids": {r["spid"] for r in found}, "pids": {r["spid"] % 1_000_000 for r in found}, "complete": complete}

@@ -92,7 +92,7 @@ def recommend(card: dict, info: dict | None, plan: dict, usage_rows: list[dict],
     out = []
     for r, gains, gain in scored:
         score = 0.6 * r["share"] / top_share + (0.4 * gain / top_gain if mine else 0)
-        parts = [f"랭커 {r['share']:.1f}% 사용"]
+        parts = [r.get("note") or f"랭커 {r['share']:.1f}% 사용"]
         if gains:
             parts.append(" · ".join(f"{STAT_CODES[c]} +{g:.0f}" for g, c in gains) + " 로 이 카드를 메워 줌")
         out.append({"spid": r["spid"], "name": r["name"], "share": r["share"], "grade": r.get("grade"), "score": score,

@@ -14,10 +14,140 @@ import streamlit as st
 
 import ui_parts
 from data_prep.datacenter import DAILY_STATS, MODES
+from data_prep.enhance import GRADE_OVR
 from data_prep.players import POSITION_GROUPS, SORT_LABELS, SORT_STATS, STATS
+from services.finder import Filters, members
 from services.insights import leaderboard
-from views.common import Ctx, daily_wait, get_player, open_player, tile_grid, with_saves
+from services.teamcolor import effect_bonus, enhance_details
+from views.common import Ctx, card_basics, daily_wait, friendly_error, get_player, open_player, tile_grid, with_saves
 from views.players import SAVE_NOTE
+
+APPLIED = "OVR (강화 · 팀컬러 적용)"   # 랭커 분석의 정렬 — 상세 조건의 강화 등급 · 강화 팀컬러 · 팀컬러를 더한 OVR
+COND_KEYS = ("nation", "club", "tc", "enh", "traits", "foot")
+
+
+def _clear_conditions(prefix: str) -> None:
+    """상세 조건을 처음으로 — 값을 직접 넣는다 (지우기만 하면 브라우저의 선택 칸에 예전 값이 남는다)."""
+    for name in COND_KEYS:
+        st.session_state[f"{prefix}_{name}"] = [] if name == "traits" else ("전체" if name == "foot" else None)
+    st.session_state[f"{prefix}_grade"] = 1
+    st.session_state.rank_page = 0
+
+
+def _level_options(ctx: Ctx, tc: dict | None) -> list[dict]:
+    """팀컬러의 단계 [{level, count, effects}] — 받아 둔 단계가 없으면 지금 받는다 (몇 개뿐)."""
+    if not tc:
+        return []
+    detail = ctx.teamcolors.details([tc["id"]]).get(tc["id"])
+    if detail is None and ctx.teamcolors.enabled:
+        try:
+            detail = ctx.teamcolors.detail_now(tc["id"])
+        except Exception:  # noqa: BLE001 — 단계를 모르면 최고 단계 효과만
+            detail = None
+    return (detail or {}).get("levels") or [{"level": tc.get("max_level") or 1, "count": tc.get("max_count") or 0,
+                                             "effects": tc.get("effects") or []}]
+
+
+def _conditions(ctx: Ctx, prefix: str, ranker: bool) -> dict | None:
+    """🔎 상세 조건 — 국적 · 클럽(클럽 경력) · 팀컬러(소속 · 특성, 단계) · 강화 팀컬러(단계) · 보유 특성 · 주발
+    (+ 랭커 분석은 강화 등급 — 랭커 기록에는 강화 등급이 없어, 고른 강화 등급 · 강화 팀컬러로 쓸 때의 OVR 을 계산한다).
+    고른 것이 없으면 None."""
+    if not ctx.finder.enabled:
+        return None
+    chosen = any(st.session_state.get(f"{prefix}_{n}") not in (None, [], "전체") for n in COND_KEYS) \
+        or (ranker and (st.session_state.get(f"{prefix}_grade") or 1) > 1)
+    title = "🔎 상세 조건 — 국적 · 클럽 · 팀컬러 · 강화 팀컬러 · 보유 특성 · 주발" + (" · 강화 등급" if ranker else "")
+    with st.expander(title, expanded=chosen):
+        try:
+            options = ctx.finder.options()
+            teamcolors = ctx.teamcolors.all()
+            enhance_info = enhance_details(ctx.teamcolors)
+        except Exception as exc:  # noqa: BLE001
+            st.caption(f"검색 목록을 불러오지 못했습니다 — {friendly_error(exc)}")
+            return None
+        normal = sorted((tc for tc in teamcolors if tc["kind"] != "강화"), key=lambda tc: (tc["kind"], tc["name"]))
+        enhance = sorted((tc for tc in teamcolors if tc["kind"] == "강화" and (enhance_info.get(tc["id"]) or {}).get("min_grade")),
+                         key=lambda tc: enhance_info[tc["id"]]["min_grade"])
+        c1, c2, c3, c4 = st.columns([1.3, 1.7, 2.2, 0.9], vertical_alignment="bottom")
+        nation = c1.selectbox("국적", [None] + sorted(options["nations"]), key=f"{prefix}_nation",
+                              format_func=lambda v: "전체" if v is None else v)
+        club = c2.selectbox("클럽 (클럽 경력까지)", [None] + sorted(options["teams"]), key=f"{prefix}_club",
+                            format_func=lambda v: "전체" if v is None else v)
+        tc = c3.selectbox("팀컬러 (소속 · 특성 — 이 팀컬러에 드는 카드만)", [None] + normal, key=f"{prefix}_tc",
+                          format_func=lambda v: "전체" if v is None else f"{v['name']} · {v['kind']}")
+        tc_levels = _level_options(ctx, tc)
+        tc_level = c4.selectbox("단계", tc_levels, index=len(tc_levels) - 1 if tc_levels else 0,
+                                key=f"{prefix}_tclv_{tc['id'] if tc else 'none'}", disabled=not tc,
+                                format_func=lambda lv: f"Lv.{lv['level']}") if tc_levels else \
+            c4.selectbox("단계", ["-"], key=f"{prefix}_tclv_none", disabled=True)
+        d1, d2, d3, d4 = st.columns([2.2, 0.9, 2.2, 1.5], vertical_alignment="bottom")
+        enh = d1.selectbox("강화 팀컬러", [None] + enhance, key=f"{prefix}_enh",
+                           format_func=lambda v: "없음" if v is None else f"{v['name']} ({enhance_info[v['id']]['min_grade']}강 이상)")
+        enh_levels = (enhance_info.get(enh["id"]) or {}).get("levels") or [] if enh else []
+        enh_level = d2.selectbox("단계", enh_levels, index=len(enh_levels) - 1 if enh_levels else 0,
+                                 key=f"{prefix}_enhlv_{enh['id'] if enh else 'none'}", disabled=not enh,
+                                 format_func=lambda lv: f"Lv.{lv['level']}") if enh_levels else \
+            d2.selectbox("단계", ["-"], key=f"{prefix}_enhlv_none", disabled=True)
+        traits = d3.multiselect("보유 특성 (최대 3개)", options["traits"], key=f"{prefix}_traits", max_selections=3)
+        st.session_state.setdefault(f"{prefix}_foot", "전체")
+        foot = d4.segmented_control("주발", ["전체", "오른발", "왼발"], key=f"{prefix}_foot")
+        grade = 1
+        if ranker:
+            st.session_state.setdefault(f"{prefix}_grade", 1)
+            grade = st.select_slider("강화 등급 — 이 등급으로 쓸 때의 OVR (랭커 기록에는 강화 등급이 없다)", options=list(range(1, 14)),
+                                     key=f"{prefix}_grade", format_func=lambda g: f"+{g}강")
+            if enh and grade < enhance_info[enh["id"]]["min_grade"]:
+                st.caption(f"{enh['name']} 은(는) {enhance_info[enh['id']]['min_grade']}강 이상이라, 적용 OVR 은 "
+                           f"+{enhance_info[enh['id']]['min_grade']}강으로 계산합니다.")
+        st.button("↺ 상세 조건 지우기", key=f"{prefix}_clear", on_click=_clear_conditions, args=(prefix,))
+    cond = {"nation": nation, "club": club, "tc": tc, "tc_level": tc_level if tc and isinstance(tc_level, dict) else None,
+            "enh": enh, "enh_level": enh_level if enh and isinstance(enh_level, dict) else None,
+            "enh_min": enhance_info[enh["id"]]["min_grade"] if enh else None, "traits": tuple(traits),
+            "foot": None if foot in (None, "전체") else foot, "grade": grade}
+    if not (nation or club or tc or enh or traits or cond["foot"] or grade > 1):
+        return None
+    return cond
+
+
+def _match(ctx: Ctx, cond: dict, spids: list[int]) -> set[int] | None:
+    """상세 조건 중 카드를 거르는 것(국적 · 클럽 · 팀컬러 · 특성 · 주발)에 맞는 카드 — 거를 것이 없으면 None.
+    데이터센터 선수 검색으로 (같은 조건은 하루 동안 다시 묻지 않는다)."""
+    tc = cond["tc"]
+    f = Filters(nation=cond["nation"], club=cond["club"], teamcolor=(tc["id"], tc["name"]) if tc else None,
+                traits=cond["traits"], foot=cond["foot"])
+    if f.empty():
+        return None
+    seasons: dict[int, int] = {}
+    for spid in spids:
+        seasons[spid // 1_000_000] = seasons.get(spid // 1_000_000, 0) + 1
+    with st.spinner("데이터센터에서 조건에 맞는 카드를 찾는 중… (같은 조건은 하루 동안 다시 묻지 않습니다)"):
+        found = members(ctx.finder, f, seasons)
+    # 국적 · 클럽 경력 · 클럽/국가 팀컬러는 선수마다 정해진다 — 같은 선수의 다른 시즌 카드도 맞는다
+    by_player = not cond["traits"] and not cond["foot"] and (not tc or tc["kind"] in ("클럽", "국가"))
+    if not found["complete"]:
+        st.caption("조건에 맞는 카드가 많아 카드가 많은 시즌부터 찾았습니다 — 적은 시즌의 카드는 빠질 수 있습니다.")
+    return {s for s in spids if s in found["spids"] or (by_player and s % 1_000_000 in found["pids"])}
+
+
+def _applied_ovr(cond: dict | None, base: int | None, member: bool) -> tuple[int | None, str]:
+    """상세 조건의 강화 등급 · 강화 팀컬러 · 팀컬러(그 팀컬러에 드는 카드만)를 더한 OVR 과 그 내역."""
+    if base is None:
+        return None, ""
+    if not cond:
+        return base, ""
+    grade = max(cond["grade"], cond["enh_min"] or 1)
+    parts, total = [], base + GRADE_OVR[grade]
+    if grade > 1:
+        parts.append(f"+{grade}강 +{GRADE_OVR[grade]}")
+    if cond["enh"] and cond["enh_level"]:
+        add = effect_bonus(cond["enh_level"]["effects"])[0]
+        total += add
+        parts.append(f"{cond['enh']['name']} Lv.{cond['enh_level']['level']} +{add}")
+    if cond["tc"] and cond["tc_level"] and member:
+        add = effect_bonus(cond["tc_level"]["effects"])[0]
+        total += add
+        parts.append(f"{cond['tc']['name']} Lv.{cond['tc_level']['level']} +{add}")
+    return total, " · ".join(parts)
 
 RATE_STATS = ("PASS", "DRIBBLE", "AERIAL", "TACKLE", "BLOCK")   # 성공률(%) 칸
 SHOWN_STATS = ("MATCHCOUNT", "ATTACKPOINT", "GOAL", "ASSIST", "PASS", "DRIBBLE", "TACKLE", "INTERCEPT", "RATING")
@@ -53,6 +183,7 @@ def _daily_board(ctx: Ctx) -> None:
     kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="daily_kind",
                            help="레전드 = 아이콘 카드가 있는 선수의 모든 시즌 카드")
     line = l_col.pills("줄", list(LINES), default="전체", key="daily_line") or "전체"
+    cond = _conditions(ctx, "dc", ranker=False)
     order = names[label]
     data = ctx.daily.stats(order, mode)
     if data is None:
@@ -67,6 +198,12 @@ def _daily_board(ctx: Ctx) -> None:
         rows = [r for r in rows if (r["spid"] % 1_000_000 in legends) == (kind == "레전드")]
     if LINES[line]:
         rows = [r for r in rows if r["position"] in LINES[line]]
+    if cond:
+        if cond["enh_min"]:   # 강화 팀컬러 — 랭커가 그 강화 등급 이상으로 쓴 카드만 (데일리 기록에는 강화 등급이 있다)
+            rows = [r for r in rows if (r.get("grade") or 0) >= cond["enh_min"]]
+        matched = _match(ctx, cond, [r["spid"] for r in rows])
+        if matched is not None:
+            rows = [r for r in rows if r["spid"] in matched]
     st.caption(f"{data['date']} · {MODE_LABELS[mode]} 랭커 상위 1만 명이 쓴 카드의 {label} TOP {len(data['rows'])} "
                f"(FC 온라인 데이터센터 데일리 기록){' · 거른 뒤 ' + str(len(rows)) + '장' if len(rows) != len(data['rows']) else ''}")
     if not rows:
@@ -129,7 +266,7 @@ def _ranker_board(ctx: Ctx) -> None:
     group = g_col.pills("포지션", ["전체"] + list(POSITION_GROUPS), key="rank_group", on_change=first_page)
     group = None if group in (None, "전체") else group
     kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="rank_kind", on_change=first_page)
-    names = {SORT_LABELS[k]: k for k in SORT_STATS.get(group, SORT_STATS[None])}   # 포지션에 맞는 정렬만
+    names = {SORT_LABELS[k]: k for k in SORT_STATS.get(group, SORT_STATS[None])} | {APPLIED: "applied"}   # 포지션에 맞는 정렬만
     if st.session_state.get("rank_sort") not in names:
         st.session_state.rank_sort = next(iter(names))
     sort_name = s_col.selectbox("정렬 기준", list(names), key="rank_sort", on_change=first_page)
@@ -139,18 +276,31 @@ def _ranker_board(ctx: Ctx) -> None:
                                           "경기 수가 적은 카드는 평균이 흔들립니다.")
     if group == "골키퍼":
         st.caption(SAVE_NOTE)
+    cond = _conditions(ctx, "rk", ranker=True)
 
     key = names[sort_name]
-    rows = leaderboard(with_saves(ctx, ctx.players), group, kind or "전체", key, min_matches, ctx.finder.legends())
+    rows = leaderboard(with_saves(ctx, ctx.players), group, kind or "전체", "match_count" if key == "applied" else key,
+                       min_matches, ctx.finder.legends())
+    matched = _match(ctx, cond, [r["player"]["spid"] for r in rows]) if cond else None
+    if matched is not None:
+        rows = [r for r in rows if r["player"]["spid"] in matched]
+    basics = card_basics(ctx, [r["player"]["spid"] for r in rows])
+    for r in rows:   # 적용 OVR — 대표 포지션 OVR(+1)에 상세 조건의 강화 · 팀컬러를 더한 값
+        base = (basics.get(r["player"]["spid"]) or {}).get("ovr")
+        r["applied"], r["applied_note"] = _applied_ovr(cond, base, matched is None or r["player"]["spid"] in matched)
+    if key == "applied":
+        rows.sort(key=lambda r: (r["applied"] is None, -(r["applied"] or 0)))
     if not rows:
-        st.info("조건에 맞는 카드가 없습니다. 최소 경기 수를 낮춰 보세요.")
+        st.info("조건에 맞는 카드가 없습니다. 상세 조건을 줄이거나 최소 경기 수를 낮춰 보세요.")
         return
 
     st.markdown(f'<div class="fc-section">🥇 TOP 3 — {sort_name}</div>', unsafe_allow_html=True)
 
     def shown(value: float | None) -> str:
-        if value is None:   # 선방 표본이 없는 골키퍼
+        if value is None:   # 선방 표본이 없는 골키퍼 · OVR 을 모르는 카드
             return "기록 부족"
+        if key == "applied":
+            return f"{value:.0f}"
         if key.endswith("_rate"):
             return f"{value:.0f}%"
         return f"{value:.0f}경기" if key == "match_count" else f"{value:.2f}"
@@ -173,6 +323,9 @@ def _ranker_board(ctx: Ctx) -> None:
                 else (f"{name} {r[k]:.0f}%" if u else f"{name} {r[k]:.2f}")
                 for k, name, u in STATS
             )
+        if r.get("applied") is not None:
+            ovr_text = f"OVR {r['applied']}" + (f" ({r['applied_note']})" if r.get("applied_note") else "")
+            stats = (f"<b>{escape(ovr_text)}</b>" if key == "applied" else escape(ovr_text)) + " · " + stats
         line, btn = st.columns([6, 1], vertical_alignment="center")
         line.markdown(
             f'<div class="fc-line"><div class="rk">{rank}</div>'
