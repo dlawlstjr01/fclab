@@ -245,6 +245,7 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 .fc-tile.fc-ssn .nm {{ font-size: 10.5px; line-height: 1.3; }}
 .fc-tile.fc-ssn.on {{ border: 2px solid {ACCENT}; box-shadow: 0 0 0 2px rgba(22,224,138,.18); }}
 div[class*="st-key-tile_ssn_"] {{ margin-bottom: 0; }}
+div[class*="st-key-tile_ssn_"] .stMarkdown div {{ margin-bottom: 0 !important; }}   /* 마크다운 칸의 음수 아래 여백(-16px) 때문에 타일이 아래 줄에 겹치던 것 */
 
 /* 큰 선수 카드 */
 .fc-card {{ position: relative; border-radius: 22px; padding: 16px 16px 18px; overflow: hidden; text-align: center;

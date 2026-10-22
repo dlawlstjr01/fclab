@@ -78,11 +78,13 @@ def render(ctx: Ctx) -> None:
                 st.session_state.pop(f"{side}_pick{suffix}", None)
             st.session_state[f"{side}_seen"] = st.session_state.get(side)
 
-    with st.container(border=True):
+    # A · B 를 좌우로 나란히 (가운데에 바꾸기) — 세로로 쌓으면 두 선수를 한눈에 못 본다
+    a_col, s_col, b_col = st.columns([1, 0.09, 1], gap="small", vertical_alignment="center")
+    with a_col, st.container(border=True):
         st.markdown("**🔵 선수 A**")
         a = card_picker(ctx, key="cmp_a_pick", default_id=st.session_state.cmp_a)
-    st.button("⇅ A · B 바꾸기", key="cmp_swap", on_click=_swap)
-    with st.container(border=True):
+    s_col.button("⇄", key="cmp_swap", on_click=_swap, width="stretch", help="A · B 바꾸기")
+    with b_col, st.container(border=True):
         st.markdown("**🟠 선수 B**")
         b = card_picker(ctx, key="cmp_b_pick", default_id=st.session_state.cmp_b)
     st.session_state.cmp_a = st.session_state.cmp_a_seen = a

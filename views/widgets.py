@@ -207,7 +207,7 @@ def card_tiles(prefix: str, items: list[tuple], chosen, on_pick) -> None:
     import ui_parts   # 순환 import 를 피하려고 여기서
 
     with st.container(key=f"grid_ssn_{prefix}", height=262 if len(items) > SCROLL_AFTER else "content"):
-        with st.container(horizontal=True, gap="small", key=f"row_ssn_{prefix}"):
+        with st.container(horizontal=True, gap="xsmall", key=f"row_ssn_{prefix}"):   # 8px — 반쪽 칸에도 한 줄에 여러 장
             for value, player, label, title, ovr in items:
                 with st.container(key=f"tile_ssn_{prefix}_{value}", width=TILE_WIDTH):
                     st.markdown(ui_parts.season_tile(player, label, title, ovr, on=value == chosen), unsafe_allow_html=True)
