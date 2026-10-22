@@ -79,10 +79,12 @@ def render(ctx: Ctx) -> None:
             st.session_state[f"{side}_seen"] = st.session_state.get(side)
 
     # A · B 를 좌우로 나란히 (가운데에 바꾸기) — 세로로 쌓으면 두 선수를 한눈에 못 본다
-    a_col, s_col, b_col = st.columns([1, 0.09, 1], gap="small", vertical_alignment="center")
+    # 위쪽 맞춤 — 가운데 맞춤이면 한쪽에 카드 목록이 열릴 때 다른 쪽 입력란이 아래로 밀려 내려갔다
+    a_col, s_col, b_col = st.columns([1, 0.09, 1], gap="small", vertical_alignment="top")
     with a_col, st.container(border=True):
         st.markdown("**🔵 선수 A**")
         a = card_picker(ctx, key="cmp_a_pick", default_id=st.session_state.cmp_a)
+    s_col.markdown('<div style="height:88px"></div>', unsafe_allow_html=True)   # ⇄ 를 이름 입력란 높이에
     s_col.button("⇄", key="cmp_swap", on_click=_swap, width="stretch", help="A · B 바꾸기")
     with b_col, st.container(border=True):
         st.markdown("**🟠 선수 B**")
