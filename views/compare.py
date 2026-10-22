@@ -9,7 +9,9 @@ import streamlit as st
 
 import ui_parts
 from data_prep.players import STATS, player_label, stat_values
-from views.common import Ctx, back_button, enrich_many, friendly_error, get_player, log, render_sources, run_with_status
+from views.common import (Ctx, back_button, dialog_open, enrich_many, friendly_error, get_player, log, render_sources,
+                          run_with_status)
+from views.player import bonus_controls, boosted, exact_watch
 from views.prices import compare_prices
 from views.widgets import card_picker
 
@@ -20,6 +22,48 @@ def _swap() -> None:
     for side in ("cmp_a", "cmp_b"):   # 선택기도 새로 채우도록
         for suffix in ("_name", "_who", "_card"):
             st.session_state.pop(f"{side}_pick{suffix}", None)
+
+
+def _ability_section(ctx: Ctx, pa: dict, pb: dict) -> None:
+    """📊 카드 능력치 비교 — 카드마다 강화 · 적응도 · 팀컬러(강화 · 소속 · 특성)를 골라 능력치 · OVR 을 나란히 (선수 상세와 같은 계산)."""
+    st.markdown('<div class="fc-section">📊 카드 능력치 비교<small>카드마다 강화 · 적응도 · 팀컬러를 골라 비교 — 선수 상세와 같은 계산 · '
+                '선택도 같이 쓴다 · FC 온라인 데이터센터</small></div>', unsafe_allow_html=True)
+    spids = [pa["spid"], pb["spid"]]
+    infos = ctx.cards.get(spids)
+    if len(infos) < 2:
+        if ctx.cards.enabled:
+            ctx.cards.want(spids)
+            _cards_waiting(ctx, spids)
+        else:
+            st.caption("데이터센터 기능이 꺼져 있어 카드 능력치를 비교할 수 없습니다 (settings.toml [market] enabled).")
+        return
+    _ability_panel(ctx, pa, pb, infos)
+
+
+@st.fragment(run_every=2)
+def _cards_waiting(ctx: Ctx, spids: list[int]) -> None:
+    if len(ctx.cards.get(spids)) == len(spids) and not dialog_open():
+        st.rerun()
+    st.info("⏳ 데이터센터에서 두 카드의 능력치 · 포지션별 오버롤 · 팀컬러를 받는 중… (몇 초)")
+
+
+@st.fragment
+def _ability_panel(ctx: Ctx, pa: dict, pb: dict, infos: dict) -> None:
+    """고르는 칸이 바뀌면 이 칸만 다시 그린다."""
+    views = []
+    for col, p, tag in zip(st.columns(2, gap="large"), (pa, pb), ("🔵 A", "🟠 B")):
+        with col, st.container(border=True):
+            st.markdown(f"**{tag} · {p['name']}** <small>{p.get('season_short', '')}</small>", unsafe_allow_html=True)
+            pick = bonus_controls(ctx, p, infos[p["spid"]], compact=True)
+            views.append({**boosted(ctx, p, infos[p["spid"]], pick), "name": f"{p['name']} {p.get('season_short', '')}",
+                          "spid": p["spid"], "combo": pick["combo"], "position": infos[p["spid"]].get("position", "")})
+    st.markdown(ui_parts.ability_compare(views[0], views[1]), unsafe_allow_html=True)   # OVR 은 각자 카드의 대표 포지션
+    if any(not v["exact"] for v in views):
+        st.caption("≈ 특정 능력치만 올리는 팀컬러가 OVR 에 미치는 정도는 데이터센터 계산을 받는 대로 정확한 값으로 바뀝니다 "
+                   "(능력치 숫자는 정확합니다).")
+    waiting = next((v for v in views if v["waiting"]), None)
+    if waiting:   # 하나씩 — 받으면 다시 그리고, 다른 쪽이 남았으면 그것을 지켜본다
+        exact_watch(ctx, waiting["spid"], waiting["combo"])
 
 
 def render(ctx: Ctx) -> None:
@@ -80,6 +124,7 @@ def render(ctx: Ctx) -> None:
                 player_label(pb): [shown(vb, k, u) for k, _, u in STATS],
             })
 
+    _ability_section(ctx, pa, pb)
     compare_prices(ctx, pa, pb)
 
     key = f"compare:{a}:{b}"

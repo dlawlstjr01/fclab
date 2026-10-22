@@ -20,9 +20,16 @@ import ui_parts
 from data_prep.enhance import CRITICAL, GRADE_OVR, MAX_GRADE, RECOVER, SUCCESS, attempt, failure_table, odds, success_rate
 from data_prep.market import bp
 from views.common import Ctx, card_basics, friendly_error, get_player, log
+
+
+def ovr_at_grade(base: int | None, grade: int) -> int | None:
+    """+1 OVR → 그 강화 등급의 OVR."""
+    return base + GRADE_OVR[grade] if base else None
 from views.widgets import card_picker, grade_buttons
 
 MAX_MATERIALS = 5
+GOAL_CAP = 20_000   # '목표 등급까지 강화' 한 번에 최대 시도 (높은 등급은 수만 번이 들 수 있다)
+HISTORY = 30        # 화면에 남겨 두는 최근 시도
 
 
 def _count(n: float | None) -> str:
@@ -36,17 +43,37 @@ def _count(n: float | None) -> str:
 
 
 def _reset_run(spid: int, start: int) -> None:
-    st.session_state.gr_run = {"spid": spid, "start": start, "grade": start, "history": []}
+    st.session_state.gr_run = {"spid": spid, "start": start, "grade": start, "history": [], "tries": 0, "ok": 0, "crit": 0,
+                               "fail": 0, "goal": None}
+
+
+def _step(run: dict, boost: float, same_grade: int | None, rng: random.Random) -> None:
+    """한 번 강화하고 기록한다. '지금 등급 고정'이면 결과만 세고 등급은 그대로 (같은 단계의 성공 확률을 여러 번 시험)."""
+    before = run["grade"]
+    after, outcome = attempt(before, boost, same_grade, rng)
+    if not st.session_state.get("gr_lock"):
+        run["grade"] = after
+    run["tries"] += 1
+    run[{"성공": "ok", "크리티컬": "crit", "실패": "fail"}[outcome]] += 1
+    run["history"].insert(0, {"from": before, "to": after, "outcome": outcome, "rate": success_rate(before, boost)})
+    del run["history"][HISTORY:]
 
 
 def _one_try(boost: float, same_grade: int | None) -> None:
     run = st.session_state.gr_run
-    before = run["grade"]
-    if before >= MAX_GRADE:
+    if run["grade"] >= MAX_GRADE:
         return
-    after, outcome = attempt(before, boost, same_grade, random.Random())
-    run["grade"] = after
-    run["history"].insert(0, {"from": before, "to": after, "outcome": outcome, "rate": success_rate(before, boost)})
+    run["goal"] = None
+    _step(run, boost, same_grade, random.Random())
+
+
+def _to_goal(boost: float, same_grade: int | None, target: int) -> None:
+    """목표 등급에 닿을 때까지 계속 강화 (최대 GOAL_CAP 번) — 몇 번 만에 닿았는지 남긴다."""
+    run = st.session_state.gr_run
+    rng, start, before = random.Random(), run["grade"], run["tries"]
+    while run["grade"] < target and run["tries"] - before < GOAL_CAP:
+        _step(run, boost, same_grade, rng)
+    run["goal"] = {"from": start, "target": target, "tries": run["tries"] - before, "reached": run["grade"] >= target}
 
 
 def _materials(ctx: Ctx, spid: int, grade: int) -> tuple[float | None, int | None]:
@@ -142,7 +169,7 @@ def render(ctx: Ctx) -> None:
             cost = int(per_try * 10**8) or None
 
     run = st.session_state.get("gr_run")
-    if not run or run["spid"] != spid or run["start"] != start:
+    if not run or run["spid"] != spid or run["start"] != start or "tries" not in run:   # 예전 형식(기록 칸 없음)도 새로
         _reset_run(spid, start)
         run = st.session_state.gr_run
     rate = success_rate(run["grade"], boost) if run["grade"] < MAX_GRADE else 0.0
@@ -150,34 +177,44 @@ def render(ctx: Ctx) -> None:
     basics = card_basics(ctx, [spid]).get(spid, {})
     base_ovr, position = basics.get("ovr"), basics.get("position")
 
+    info = ctx.cards.get([spid]).get(spid) or {}
+    locked = bool(st.session_state.get("gr_lock"))
     with out_col:
-        card_col, info_col = st.columns([1, 1.6], vertical_alignment="center")
-        card_col.markdown(ui_parts.card_visual(player, (base_ovr or 0) + GRADE_OVR[run["grade"]] if base_ovr else None,
-                                               position, run["grade"], high=True), unsafe_allow_html=True)
-        with info_col:
-            st.markdown(f"### {escape(player['name'])} {ui_parts.grade_badge(run['grade'])}", unsafe_allow_html=True)
-            st.caption(f"{player['season']} · 시작 +{start} → 목표 +{target}")
-            if run["grade"] < MAX_GRADE:
-                fails = failure_table(run["grade"], same_grade)
-                st.markdown(f"다음 강화 **+{run['grade']} → +{run['grade'] + 1}** · 성공 **{rate:.2f}%** "
-                            f"(공식 {SUCCESS[run['grade']]}% × 게이지 {boost:.0f}%)"
-                            + (f" · 크리티컬(+2) {critical:g}%" if critical else ""))
-                st.caption("실패하면 → " + ", ".join(f"+{g} {p:g}%" for g, p in sorted(fails.items(), reverse=True)))
-            else:
-                st.success("최고 등급(+13)입니다.")
+        # 공식 강화 시뮬레이터처럼 가운데에 — 큰 카드(OVR · 포지션 · 급여 · 강화 · 이름 · 국기) → 지금 › 다음 등급 → 확률 · 게이지 칸
+        st.markdown(f'<div class="fc-growcard">{ui_parts.pitch_card(player, position or "", ovr_at_grade(base_ovr, run["grade"]), True, run["grade"], basics.get("pay"), None, info.get("nation_flag", ""), "", high=True)}</div>',
+                    unsafe_allow_html=True)
+        st.markdown(ui_parts.grow_board(run["grade"], rate, boost, SUCCESS.get(run["grade"], 0), critical,
+                                        run["history"][0] if run["history"] else None, locked), unsafe_allow_html=True)
+        if run["grade"] < MAX_GRADE:
+            fails = failure_table(run["grade"], same_grade)
+            st.caption("실패하면 → " + ", ".join(f"+{g} {p:g}%" for g, p in sorted(fails.items(), reverse=True)))
+        reached = run["grade"] >= target
+        with st.container(key="gr_actions"):
             b1, b2 = st.columns(2)
             b1.button("⚒️ 한 번 강화", key="gr_try", type="primary", width="stretch", on_click=_one_try, args=(boost, same_grade),
                       disabled=run["grade"] >= MAX_GRADE)
-            b2.button("🔄 처음부터", key="gr_reset", width="stretch", on_click=_reset_run, args=(spid, start))
+            b2.button(f"🎯 +{target} 까지 강화", key="gr_goal", type="primary", width="stretch", on_click=_to_goal,
+                      args=(boost, same_grade, target), disabled=locked or reached,
+                      help="지금 등급 고정 중에는 쓸 수 없습니다" if locked else "이미 목표 등급입니다" if reached
+                      else f"+{target} 에 닿을 때까지 계속 강화합니다 (최대 {GOAL_CAP:,}번)")
+            st.checkbox("지금 등급 고정 — 성공 · 실패해도 등급이 그대로 (이 단계의 성공 확률을 여러 번 시험)", key="gr_lock")
+        goal = run.get("goal")
+        if goal:
+            (st.success if goal["reached"] else st.warning)(
+                f"🎯 +{goal['from']} → +{goal['target']}: " + (f"**{goal['tries']:,}번** 만에 닿았습니다"
+                                                                 if goal["reached"] else
+                                                                 f"{goal['tries']:,}번 강화했지만 아직 +{run['grade']} (한 번에 최대 {GOAL_CAP:,}번)")
+                + (f" · 소모 선수 약 {bp(cost * goal['tries'])}" if cost else ""))
+        st.markdown(ui_parts.grow_record(run["tries"], run["ok"], run["crit"], run["fail"]), unsafe_allow_html=True)
+        _, r_col, _ = st.columns([1, 1, 1])
+        r_col.button("↺ 초기화", key="gr_reset", width="stretch", on_click=_reset_run, args=(spid, start),
+                     help=f"+{start} 로 되돌리고 기록을 지웁니다")
         if run["history"]:
-            tries = len(run["history"])
-            ok = sum(1 for h in run["history"] if h["outcome"] != "실패")
-            st.markdown(f"**시도 {tries}번** · 성공 {ok} · 실패 {tries - ok}"
-                        + (f" · 소모 선수 약 {bp(cost * tries)}" if cost else ""))
             icon = {"성공": "✅", "크리티컬": "💥", "실패": "❌"}
-            st.markdown("  \n".join(f"{icon[h['outcome']]} +{h['from']} → **+{h['to']}** {h['outcome']} "
-                                    f"<small>(확률 {h['rate']:.2f}%)</small>" for h in run["history"][:8]),
-                        unsafe_allow_html=True)
+            with st.expander(f"최근 시도 {min(len(run['history']), HISTORY)}번", expanded=False):
+                st.markdown("  \n".join(f"{icon[h['outcome']]} +{h['from']} → **+{h['to']}** {h['outcome']} "
+                                        f"<small>(확률 {h['rate']:.2f}%)</small>" for h in run["history"]),
+                            unsafe_allow_html=True)
 
     st.markdown(f'<div class="fc-section">🎲 +{start} → +{target} 까지<small>공식 확률로 정확히 계산 (모의 실험 아님) · 게이지 '
                 f'{boost:.0f}%{" · 같은 선수 +" + str(same_grade) + " 소모" if same_grade else ""}</small></div>',

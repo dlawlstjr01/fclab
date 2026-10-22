@@ -69,8 +69,9 @@ def _reset_bonus(spid: int) -> None:
         del st.session_state[key]
 
 
-def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
+def bonus_controls(ctx: Ctx, player: dict, info: dict, compact: bool = False) -> dict:
     """데이터센터 선수 정보 화면의 추가 능력치 선택 — 강화(버튼) · 적응도 · 강화 / 소속 / 특성 팀컬러 (소속은 단계까지) · 초기화.
+    선택은 카드마다 같은 키(pc_*_{spid})라 선수 상세와 비교가 같은 값을 쓴다. compact = 좁은 칸(비교의 한쪽) — 두 칸씩 세 줄.
     돌려주는 값: combo(데이터센터 계산 조합) · effects(고른 팀컬러들의 효과 문구 — 모르면 None) · applied(화면 문구)."""
     spid = player["spid"]
     teamcolors = {tc["id"]: tc for tc in ctx.teamcolors.all()}
@@ -81,7 +82,12 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
     details = ctx.teamcolors.details([t["id"] for t in own + features]) | enhance_details(ctx.teamcolors)
     ctx.teamcolors.want([t["id"] for t in own + features])   # 단계별 효과를 미리 — 고르자마자 바로 계산되게
     grade = grade_buttons("강화", f"pc_grade_{spid}")
-    a_col, e_col, t_col, l_col, r_col, x_col = st.columns([0.8, 2.1, 2.1, 0.9, 2.1, 1], vertical_alignment="bottom")
+    if compact:
+        a_col, e_col = st.columns([1, 3], vertical_alignment="bottom")
+        t_col, l_col = st.columns([3, 1], vertical_alignment="bottom")
+        r_col, x_col = st.columns([3, 1], vertical_alignment="bottom")
+    else:
+        a_col, e_col, t_col, l_col, r_col, x_col = st.columns([0.8, 2.1, 2.1, 0.9, 2.1, 1], vertical_alignment="bottom")
     adapt_key = f"pc_adapt_{spid}"
     if st.session_state.get(adapt_key) not in (None, *ADAPT_LEVELS):   # 예전에 고른 2 · 3 · 4 (지금은 없는 단계)
         st.session_state[adapt_key] = ADAPT_LEVELS[-1] if st.session_state[adapt_key] > 1 else ADAPT_LEVELS[0]
@@ -124,8 +130,9 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
                  help="+1강 · 적응도 1 · 팀컬러 없음으로 되돌린다")
     if conditions:   # 지금 등급으로 고를 수 있는 강화 팀컬러는 굵게 — 백금빛 물결이 왜 안 보이는지(11강 미만) 바로 알 수 있게
         st.caption("강화 팀컬러 조건: " + " · ".join(f"**{n} {g}강+**" if g <= grade else f"{n} {g}강+" for g, n in conditions)
-                   + f" — 지금 +{grade}강은 굵은 것만 고를 수 있습니다. 데이터센터에서 보이는 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · "
-                   "백금빛 Lv.2 +9 는 팀컬러(+3 · +4 · +5)에 적응도 5(+4)를 더한 값입니다 — 적응도 +5 를 함께 고르면 초록 +N 이 같아집니다.")
+                   + f" — 지금 +{grade}강은 굵은 것만 고를 수 있습니다."
+                   + ("" if compact else " 데이터센터에서 보이는 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · 백금빛 Lv.2 +9 는 팀컬러(+3 · +4 · +5)에"
+                                         " 적응도 5(+4)를 더한 값입니다 — 적응도 +5 를 함께 고르면 초록 +N 이 같아집니다."))
     effects = ([level_effects(*enhance)] if enhance[0] else []) + ([level_effects(pick["id"], level)] if pick else []) \
         + ([level_effects(relation["id"], None)] if relation else [])
     extras = ([f"적응도 +{adapt}"] if adapt > 1 else []) + ([enhance_label(enhance).split(" (")[0]] if enhance[0] else []) \
@@ -144,9 +151,9 @@ def _stars_html(base: int | None, grade: int) -> str:
     return f'<b class="txt">{"★" * have}{plus}</b>{note}'
 
 
-@st.fragment
-def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
-    pick = _bonus_controls(ctx, player, info)
+def boosted(ctx: Ctx, player: dict, info: dict, pick: dict) -> dict:
+    """고른 강화 · 적응도 · 팀컬러로 오른 능력치 — {shown(능력치 · 요약 · OVR · 포지션별 OVR), base(초록 +N 의 기준), exact,
+    focus(팀컬러가 따로 올려 주는 능력치), note(고른 것), mark(추정이면 ≈), waiting(데이터센터 계산을 받는 중)}."""
     spid, grade = player["spid"], pick["grade"]
     plain = not pick["extras"]
     # 강화 · 적응도 · 팀컬러는 바로 계산한다 (데이터센터와 같은 규칙). 특정 능력치만 오르는 팀컬러는 포지션별 OVR 이 포지션마다
@@ -155,9 +162,9 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
     shown = bonus_stats(info, grade, adapt, [e for e in pick["effects"] if e])
     exact = shown["exact"] and all(pick["effects"])
     if not plain and not exact:
-        boosted = ctx.cards.exact(spid, pick["combo"])
-        if boosted:
-            shown, exact = {**boosted, "exact": True}, True
+        computed = ctx.cards.exact(spid, pick["combo"])
+        if computed:
+            shown, exact = {**computed, "exact": True}, True
     # 초록 +N 의 기준은 강화까지 — 강화만 바꾸면 +N 이 붙지 않고(강화분은 숫자에), +N 은 그 위에 적응도(5 = +4) · 팀컬러(강화 ·
     # 소속(특정 능력치만 오르는 것도 그 능력치에) · 특성)로 더 오른 만큼. 데이터센터는 강화를 바꾸면 적응도 5 와 그 등급의 가장 높은
     # 강화 팀컬러를 함께 골라(n1Change=1) 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · 백금빛 Lv.2 +9 로 보이는데, 이것은 팀컬러 +3/+4/+5 에
@@ -168,7 +175,17 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         for name, value in effect_bonus(effect or [])[1].items():
             focus[name] = focus.get(name, 0) + value
     note = f"+{grade}강" + (f" · {' · '.join(pick['extras'])}" if pick["extras"] else "")
-    mark = "" if exact else " ≈"
+    return {"shown": shown, "base": base, "exact": exact, "focus": focus, "note": note, "mark": "" if exact else " ≈",
+            "plain": plain, "waiting": not exact and not plain and ctx.cards.exact_waiting(spid, pick["combo"])}
+
+
+@st.fragment
+def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
+    pick = bonus_controls(ctx, player, info)
+    spid, grade = player["spid"], pick["grade"]
+    view = boosted(ctx, player, info, pick)
+    shown, base, exact, focus, note, mark = (view[k] for k in ("shown", "base", "exact", "focus", "note", "mark"))
+    plain = view["plain"]
     stats = ctx.db.card_stats([spid]).get(spid) or {}
     pay_note = ""
     if stats.get("pay_change"):
@@ -196,9 +213,9 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
     if not exact and not plain:
         # 받는 중일 때만 지켜본다 — 데이터센터가 꺼졌거나 받기에 실패하면 기다릴 것이 없는데, 그때도 지켜보면
         # '안 왔다 → 다시 그리기'를 끝없이 되풀이했다 (화면이 계속 깜빡이고 멈추지 않음)
-        if ctx.cards.exact_waiting(spid, pick["combo"]):
+        if view["waiting"]:
             st.caption("≈ 특정 능력치만 올리는 팀컬러가 포지션별 OVR 에 미치는 정도를 데이터센터에서 받는 중 — 받는 대로 정확한 값으로 바뀝니다.")
-            _exact_watch(ctx, spid, pick["combo"])
+            exact_watch(ctx, spid, pick["combo"])
         else:
             st.caption("≈ 특정 능력치만 올리는 팀컬러가 포지션별 OVR 에 미치는 정도는 추정값입니다 (데이터센터 계산을 받지 못함). "
                        "능력치 숫자는 정확합니다.")
@@ -225,7 +242,7 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
 
 
 @st.fragment(run_every=1.5)
-def _exact_watch(ctx: Ctx, spid: int, combo: tuple) -> None:
+def exact_watch(ctx: Ctx, spid: int, combo: tuple) -> None:
     """데이터센터 계산이 오면 화면을 한 번 다시 그린다 (모달이 열려 있으면 기다린다)."""
     if not ctx.cards.exact_waiting(spid, combo) and not dialog_open():
         st.rerun()

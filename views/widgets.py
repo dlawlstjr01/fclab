@@ -181,9 +181,10 @@ def card_picker(ctx: Ctx, key: str, default_id: str | None = None, label: str = 
     def pick(spid: int) -> None:
         st.session_state[card_key] = spid
 
-    who_col, again_col = st.columns([4, 1], vertical_alignment="center")
+    who_col, again_col = st.columns([3, 1.3], vertical_alignment="center")   # 버튼 칸을 넉넉히 — '다시 고르기'가 두 줄로 넘어가지 않게
     who_col.markdown(f"**{name}** · {len(cards)}장 · 고른 카드 **{season_short(ctx.catalog.season_name(chosen))}**")
-    again_col.button("다시 고르기", key=f"{key}_again", on_click=reset, width="stretch")
+    with again_col.container(key=f"again_{key}"):
+        st.button("↺ 다시 고르기", key=f"{key}_again", on_click=reset, width="stretch")
     # 시즌마다 그 시즌 카드 배경 위 선수 액션샷 · OVR — 드롭다운 글자만으로는 어떤 카드인지 알기 어렵다
     ovrs = card_ovrs(ctx, cards)
     items = []

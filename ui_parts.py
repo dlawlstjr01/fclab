@@ -386,6 +386,65 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-abil .it.focus {{ color: {ACCENT}; font-weight: 800; background: rgba(22,224,138,.10); border-radius: 6px;
   padding: 2px 6px; margin: 0 -6px; }}
 @media (max-width: 760px) {{ .fc-abil {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
+/* 강화 시뮬 — 큰 카드 · 등급 칸 · 확률 · 게이지 칸 · 기록 표 (공식 강화 시뮬레이터처럼 가운데 정렬) */
+.fc-growcard {{ width: min(250px, 100%); margin: 4px auto 0; }}
+.fc-growbd {{ text-align: center; margin: 6px 0 4px; }}
+.fc-growbd .last {{ display: inline-block; margin-bottom: 8px; padding: 3px 12px; border-radius: 999px; font-weight: 800;
+  font-size: 14px; background: {t['track']}; color: {t['ink']}; }}
+.fc-growbd .last.성공 {{ color: {ACCENT}; }} .fc-growbd .last.크리티컬 {{ color: #f2c94c; }} .fc-growbd .last.실패 {{ color: #ff6b6b; }}
+.fc-growbd .last small {{ font-weight: 600; color: {t['muted']}; margin-left: 4px; }}
+.fc-growbd .steps {{ display: flex; align-items: center; justify-content: center; gap: 10px; }}
+.fc-growbd .steps em {{ font-style: normal; font-size: 22px; color: {t['ink2']}; }}
+.fc-growbd .gbox {{ display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 34px; border-radius: 4px;
+  font-size: 20px; font-weight: 900; }}
+.fc-growbd .gbox.g1 {{ color: #e6e8ea; background: linear-gradient(140deg, #5b5f66 0%, #3f434a 100%); }}
+.fc-growbd .gbox.g2 {{ color: #fff3ea; background: linear-gradient(140deg, #de946b 0%, #ad5f42 100%); }}
+.fc-growbd .gbox.g5 {{ color: #3c414a; background: linear-gradient(140deg, #e3e4e7 0%, #b8bdca 100%); }}
+.fc-growbd .gbox.g8 {{ color: #5a4500; background: linear-gradient(140deg, #f9dd62 0%, #dca908 100%); }}
+.fc-growbd .gbox.g11 {{ color: #2d2b43; background: linear-gradient(140deg, #f4f6ff 0%, #c9d2f2 45%, #9fb0e6 100%); }}
+.fc-growbd .gbox.next {{ opacity: .85; color: {t['ink']}; text-shadow: 0 1px 2px rgba(0,0,0,.5); }}
+.fc-growbd .rate {{ margin-top: 10px; font-size: 18px; font-weight: 700; color: {t['ink']}; }}
+.fc-growbd .rate b {{ font-size: 26px; color: {ACCENT}; }}
+.fc-growbd .cnt {{ font-size: 15px; color: {t['ink']}; }}
+.fc-growbd .cnt b {{ color: {ACCENT}; font-size: 18px; }}
+.fc-growbd .cnt small {{ display: block; font-size: 11.5px; color: {t['muted']}; }}
+.fc-growbd .gauge {{ display: flex; gap: 3px; width: min(300px, 100%); margin: 8px auto 2px; }}
+.fc-growbd .gauge span {{ position: relative; flex: 1; height: 24px; background: {t['track']}; overflow: hidden; }}
+.fc-growbd .gauge i {{ position: absolute; left: 0; top: 0; bottom: 0; background: #a8e61d; }}
+.fc-growbd .gauge b {{ position: relative; display: block; text-align: right; padding-right: 5px; line-height: 24px; color: #fff;
+  font-size: 14px; text-shadow: 0 1px 2px rgba(0,0,0,.6); }}
+.fc-growrec {{ margin: 8px auto 4px; border-collapse: collapse; font-size: 13.5px; }}
+.fc-growrec th, .fc-growrec td {{ padding: 6px 14px; text-align: center; border-bottom: 1px solid {t['border']}; color: {t['ink']}; }}
+.fc-growrec th {{ font-weight: 800; }}
+.fc-growrec small {{ color: {t['muted']}; }}
+div.st-key-gr_actions button p, div[class*="st-key-again_"] button p {{ white-space: nowrap; }}
+/* 비교: 두 카드 능력치 나란히 — A(파랑)는 가운데에서 왼쪽으로, B(주황)는 오른쪽으로 막대, 높은 쪽 숫자에 색과 차이 */
+.fc-abcmp {{ border: 1px solid {t['border']}; border-radius: 14px; padding: 10px 14px; background: {t['surface']}; }}
+.fc-abcmp .hd, .fc-abcmp .r {{ display: grid; grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr); align-items: center;
+  gap: 10px; }}
+.fc-abcmp .hd {{ padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid {t['border']}; font-weight: 800; font-size: 15px; }}
+.fc-abcmp .hd .a {{ text-align: right; color: #4aa3ff; }} .fc-abcmp .hd .b {{ color: #ff9f43; }}
+.fc-abcmp .hd small {{ display: block; font-size: 11.5px; font-weight: 600; color: {t['muted']}; }}
+.fc-abcmp .r {{ padding: 2px 0; font-size: 13px; color: {t['ink2']}; }}
+.fc-abcmp .r.grp {{ margin-top: 6px; padding-top: 6px; border-top: 1px dashed {t['border']}; color: {t['ink']}; }}
+.fc-abcmp .r.big {{ font-size: 16px; }}
+.fc-abcmp .r.big b {{ font-size: 20px; }}
+.fc-abcmp .k {{ text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.fc-abcmp .a, .fc-abcmp .b {{ display: flex; align-items: center; gap: 8px; min-width: 0; }}
+.fc-abcmp .hd .a, .fc-abcmp .hd .b {{ display: block; }}
+.fc-abcmp .v {{ flex: 0 0 112px; white-space: nowrap; font-variant-numeric: tabular-nums; }}   /* 숫자 칸 너비를 고정 — 막대 길이가 줄마다 같은 기준 */
+.fc-abcmp .a .v {{ text-align: right; }}
+.fc-abcmp .v b {{ color: {t['ink']}; font-weight: 700; }}
+.fc-abcmp .a.win .v b {{ color: #4aa3ff; font-weight: 900; }} .fc-abcmp .b.win .v b {{ color: #ff9f43; font-weight: 900; }}
+.fc-abcmp small.up {{ margin-left: 3px; font-size: 10.5px; font-weight: 700; color: {ACCENT}; }}
+.fc-abcmp small.gap {{ margin: 0 4px; font-size: 10.5px; font-weight: 700; color: {t['muted']}; }}
+.fc-abcmp small.pos {{ margin-left: 4px; font-size: 11px; font-weight: 800; color: {t['ink2']}; }}
+.fc-abcmp .bar {{ flex: 1; min-width: 20px; height: 6px; display: flex; }}
+.fc-abcmp .a .bar {{ justify-content: flex-end; }}
+.fc-abcmp .bar i {{ display: block; height: 100%; border-radius: 3px; background: {t['grid']}; }}
+.fc-abcmp .a.win .bar i {{ background: rgba(74,163,255,.75); }} .fc-abcmp .b.win .bar i {{ background: rgba(255,159,67,.75); }}
+@media (max-width: 760px) {{ .fc-abcmp .hd, .fc-abcmp .r {{ grid-template-columns: minmax(0, 1fr) 84px minmax(0, 1fr); }}
+  .fc-abcmp .bar {{ display: none; }} }}
 .fc-sum {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }}
 .fc-sum > div {{ flex: 1 1 120px; min-width: 0; border-radius: 12px; padding: 8px 12px; background: {t['track']}; }}
 .fc-sum span {{ display: block; font-size: 11px; color: {t['muted']}; }}
@@ -621,7 +680,7 @@ def bp_short(value: int | None) -> str:
 
 
 def pitch_card(player: dict, code: str, ovr: int | None, exact: bool = True, grade: int | None = None,
-               pay: int | None = None, trait: dict | None = None, flag: str = "", price: str = "") -> str:
+               pay: int | None = None, trait: dict | None = None, flag: str = "", price: str = "", high: bool = False) -> str:
     """경기장 자리의 선수 카드 (공식 스쿼드 메이커처럼) — 시즌 카드 위 왼쪽 칸에 그 자리 OVR · 포지션 · 급여 · 강화를 차례로,
     오른쪽 위 보유 신규 특성, 아래 국기 · 이름. 카드 밑에 시세 · 구단 가치 중 비율. trait = {name, icon}."""
     g = grade or 1
@@ -630,8 +689,39 @@ def pitch_card(player: dict, code: str, ovr: int | None, exact: bool = True, gra
              if trait else "")
     inner += f'<div class="nm">{escape(player["name"])}</div>' + (f'<div class="fl">{flag_html}</div>' if flag_html else "")
     grade_html = f'<i class="gd {grade_tier(g)}" title="강화 {g}단계">{g}</i>'
-    return (f'<div class="pc">{card_visual(player, ovr, code, pay=pay, inner=inner, exact=exact, stack=grade_html)}'
+    return (f'<div class="pc">{card_visual(player, ovr, code, pay=pay, inner=inner, exact=exact, stack=grade_html, high=high)}'
             f'<div class="price">{price}</div></div>')
+
+
+def grow_board(grade: int, rate: float, boost: float, official: float, critical: float | None, last: dict | None,
+               locked: bool) -> str:
+    """강화 판 (공식 강화 시뮬레이터처럼) — 지금 등급 › 다음(?) 칸, 강화 확률, 게이지 칸(5칸 = 100%), 방금 결과."""
+    from data_prep.enhance import MAX_GRADE   # ui_parts 는 화면 부품만 — 강화 규칙은 여기서만 빌린다
+
+    banner = ""
+    if last:
+        text = {"성공": "✅ 성공", "크리티컬": "💥 크리티컬 (+2)", "실패": "❌ 실패"}[last["outcome"]]
+        moved = f"+{last['from']} → +{last['to']}" + (" · 등급 고정이라 그대로" if locked and last["to"] != last["from"] else "")
+        banner = f'<div class="last {last["outcome"]}">{text} <small>{moved}</small></div>'
+    if grade >= MAX_GRADE:
+        steps = f'<span class="gbox {grade_tier(grade)}">{grade}</span>'
+        return f'<div class="fc-growbd">{banner}<div class="steps">{steps}</div><div class="rate">최고 등급입니다</div></div>'
+    cells = "".join(f'<span><i style="width:{max(0.0, min(1.0, (boost - 20 * i) / 20)) * 100:.0f}%"></i><b>{i + 1}</b></span>'
+                    for i in range(5))
+    crit = f" · 크리티컬(+2) {critical:g}%" if critical else ""
+    return (f'<div class="fc-growbd">{banner}<div class="steps"><span class="gbox {grade_tier(grade)}">{grade}</span><em>›</em>'
+            f'<span class="gbox next {grade_tier(grade + 1)}">?</span></div>'
+            f'<div class="rate">강화 확률 <b>{rate:.2f}</b>%</div>'
+            f'<div class="cnt"><b>{boost / 20:g}</b>칸 <small>게이지 {boost:.0f}% · 공식 {official:g}%{crit}</small></div>'
+            f'<div class="gauge">{cells}</div></div>')
+
+
+def grow_record(tries: int, ok: int, crit: int, fail: int) -> str:
+    """강화 기록 표 — 전체 · 성공 · 실패 · 성공 비율 (공식 시뮬레이터처럼)."""
+    ratio = f"{(ok + crit) / tries * 100:.0f}%" if tries else "0%"
+    succ = f"{ok + crit}" + (f" <small>(크리티컬 {crit})</small>" if crit else "")
+    return (f'<table class="fc-growrec"><thead><tr><th>전체</th><th>성공</th><th>실패</th><th>성공 비율</th></tr></thead>'
+            f'<tbody><tr><td>{tries:,}</td><td>{succ}</td><td>{fail:,}</td><td>{ratio}</td></tr></tbody></table>')
 
 
 def foot_text(foot: dict | None) -> str:
@@ -736,6 +826,51 @@ def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0
                 parts.append(f'<div class="it{mark}">{escape(name)}<span><b class="{_tier(value)}">{value}</b>'
                              f'{_up(value, (base or {}).get(name))}</span></div>')
     return f'<div class="fc-abil">{"".join(parts)}</div>'
+
+
+CMP_STEP = 6   # 비교 막대 — 한 점 차이마다 낮은 쪽 막대를 이만큼(%) 짧게 (120 대 125 면 100% 대 70%)
+
+
+def _cmp_cell(value: int | None, other: int | None, base: int | None, side: str, mark: str = "", pos: str = "") -> str:
+    """비교 표 한쪽 칸 — 값(높으면 그쪽 색) · 초록 +N(강화 위에 적응도 · 팀컬러로 오른 만큼) · 막대(가운데에서 바깥으로).
+    막대는 두 값의 차이로 — 높은 쪽(같으면 둘 다)이 가득, 낮은 쪽은 한 점마다 CMP_STEP% 짧게. 120 · 130 대 값을 0 부터 재면
+    길이가 거의 같아 보여서."""
+    if value is None:
+        return f'<div class="{side}"></div>'
+    win = " win" if other is not None and value > other else ""
+    up = f'<small class="up">+{value - base}</small>' if base is not None and value > base else ""
+    gap = f'<small class="gap">+{value - other}</small>' if win else ""
+    width = 100 if other is None or value >= other else max(8, 100 - (other - value) * CMP_STEP)
+    bar = f'<i style="width:{width}%"></i>'
+    shown = f"<b>{value}{mark}</b>" + (f"<small class=\"pos\">{escape(pos)}</small>" if pos else "")
+    inner = f"{gap}{shown}{up}" if side == "a" else f"{shown}{up}{gap}"
+    bar_html, value_html = f'<span class="bar">{bar}</span>', f'<span class="v">{inner}</span>'
+    cells = bar_html + value_html if side == "a" else value_html + bar_html   # 숫자는 가운데 이름 옆, 막대는 바깥으로
+    return f'<div class="{side}{win}">{cells}</div>'
+
+
+def ability_compare(a: dict, b: dict) -> str:
+    """두 카드의 능력치를 나란히 — a · b = views.player.boosted 결과 + name · position(카드의 대표 포지션). 위에 대표 OVR
+    (각자 카드에 나와 있는 포지션), 아래에 요약 6개와 세부 능력치 34개를 묶음별로. 더 높은 쪽 숫자에 그쪽 색과 차이,
+    초록 +N 은 각자 강화 위에 적응도 · 팀컬러로 오른 만큼."""
+    def row(label: str, va, vb, ba=None, bb=None, cls: str = "", ma: str = "", mb: str = "", pa: str = "", pb: str = "") -> str:
+        return (f'<div class="r {cls}">{_cmp_cell(va, vb, ba, "a", ma, pa)}<div class="k">{label}</div>'
+                f'{_cmp_cell(vb, va, bb, "b", mb, pb)}</div>')
+
+    sa, sb = a["shown"], b["shown"]
+    rows = [row("대표 OVR", sa.get("ovr"), sb.get("ovr"), a["base"].get("ovr"), b["base"].get("ovr"), "big", a["mark"], b["mark"],
+                a.get("position", ""), b.get("position", ""))]
+    for group, names in ABILITY_GROUPS.items():
+        rows.append(row(f"<b>{group}</b>", (sa.get("summary") or {}).get(group), (sb.get("summary") or {}).get(group),
+                        (a["base"].get("summary") or {}).get(group), (b["base"].get("summary") or {}).get(group), "grp"))
+        for name in names:
+            rows.append(row(escape(name), (sa.get("stats") or {}).get(name), (sb.get("stats") or {}).get(name),
+                            (a["base"].get("stats") or {}).get(name), (b["base"].get("stats") or {}).get(name)))
+    wins_a = sum(1 for n in (sa.get("stats") or {}) if (sa["stats"].get(n) or 0) > ((sb.get("stats") or {}).get(n) or 0))
+    wins_b = sum(1 for n in (sb.get("stats") or {}) if (sb["stats"].get(n) or 0) > ((sa.get("stats") or {}).get(n) or 0))
+    head = (f'<div class="hd"><div class="a">{escape(a["name"])}<small>{escape(a["note"])} · 세부 {wins_a}개 우세</small></div>'
+            f'<div class="k"></div><div class="b">{escape(b["name"])}<small>{escape(b["note"])} · 세부 {wins_b}개 우세</small></div></div>')
+    return f'<div class="fc-abcmp">{head}{"".join(rows)}</div>'
 
 
 def trait_chips(traits: list[dict]) -> str:

@@ -682,11 +682,29 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     at.button(key="make_intro").click().run()
     check(f"intro:{b['player_id']}" in at.session_state["results"], "AI 선수 리포트(특화 기능)가 근거와 함께")
     check(any(str(getattr(btn, "key", "")) == "to_compare" for btn in at.button), "선수 상세: '비교하기' 버튼 (모달)")
+    cmp_db = FcDb(tmp / "storage" / "fclab.db")   # 두 카드의 상세 (데이터센터 대신) — 능력치 비교 점검용
+    for p_, ovr_ in ((a, 100), (b, 104)):
+        cmp_db.put_card_info(int(p_["spid"]), {"v": 2, "ovr": ovr_, "position": "ST", "pay": 20,
+                                               "position_ovr": {pos: ovr_ - 10 for pos in OVR_GRID} | {"ST": ovr_},
+                                               "teamcolors": {"소속": [], "관계": [], "강화": []}, "traits": [],
+                                               "summary": {"스피드": ovr_}, "stats": {"속력": ovr_, "가속력": ovr_ - 2},
+                                               "foot_lr": {"L": 3, "R": 5, "main": "R"}, "clubs": [], "skill_moves": 4})
     at.session_state["cmp_a"], at.session_state["cmp_b"] = a["player_id"], b["player_id"]
     at.session_state["page"] = "compare"
     at.run()
     check(at.session_state["page"] == "compare" and any('class="fc-panel fc-compare"' in m.value for m in at.markdown),
           "비교: 두 선수 스탯 차트")
+
+    def cmp_html() -> str:
+        return next((m.value for m in at.markdown if 'class="fc-abcmp"' in m.value), "")
+
+    check('<div class="b win">' in cmp_html() and "<b>104</b>" in cmp_html() and "<b>100</b>" in cmp_html(),
+          "비교: 카드 능력치 나란히 — 처음은 +1강 (대표 OVR 100 vs 104, 높은 쪽에 색 · 막대는 차이만큼 짧게)")
+    at.button(key=f"pc_grade_{a['spid']}__8").click().run()
+    at.selectbox(key=f"pc_adapt_{b['spid']}").select(5).run()
+    check(not at.exception and f"<b>{100 + GRADE_OVR[8]}</b>" in cmp_html()
+          and '<b>108</b><small class="up">+4</small>' in cmp_html() and '<div class="a win">' in cmp_html(),
+          f"비교: A 를 8강 → 대표 OVR {100 + GRADE_OVR[8]}, B 를 적응도 5 → 108 · 초록 +4 (카드마다 강화 · 적응도 · 팀컬러를 골라 비교)")
     at.button(key="make_compare").click().run()
     check(f"compare:{a['player_id']}:{b['player_id']}" in at.session_state["results"], "AI 커리어 비교(특화 기능)")
     at.button(key="cmp_b_pick_again").click().run()
@@ -874,6 +892,24 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     check(not at.exception and len(run_state["history"]) == 1 and run_state["history"][0]["to"] == 2
           and any("평균 시도" in m.value for m in at.markdown),
           "강화 시뮬: +1 → +2 는 100% 성공, 목표까지 평균 시도 · 50% · 90% 횟수를 계산")
+    check(any('class="fc-growbd"' in m.value and "강화 확률" in m.value for m in at.markdown)
+          and any('class="fc-growrec"' in m.value and "<td>1</td>" in m.value for m in at.markdown)
+          and any('class="fc-growcard"' in m.value and 'class="pc"' in m.value for m in at.markdown),
+          "강화 시뮬: 공식 시뮬레이터처럼 — 큰 카드 · 지금 › 다음 등급 칸 · 강화 확률 · 게이지 칸 · 전체/성공/실패/성공 비율 표")
+    at.session_state["gr_target"] = 4
+    at.run()
+    at.button(key="gr_goal").click().run()
+    run_state = at.session_state["gr_run"]
+    check(not at.exception and run_state["grade"] >= 4 and run_state["goal"]["reached"]
+          and run_state["tries"] == 1 + run_state["goal"]["tries"] and at.button(key="gr_goal").disabled,
+          f"강화 시뮬: '+4 까지 강화' → 닿을 때까지 계속 ({run_state['goal']['tries']}번 · 기록 표에 모두 셈)")
+    at.checkbox(key="gr_lock").check().run()
+    before = (run_state["grade"], run_state["tries"])
+    for _ in range(5):
+        at.button(key="gr_try").click().run()
+    run_state = at.session_state["gr_run"]
+    check(run_state["grade"] == before[0] and run_state["tries"] == before[1] + 5 and at.button(key="gr_goal").disabled,
+          f"강화 시뮬: 지금 등급 고정 → 5번 강화해도 +{before[0]} 그대로, 결과만 센다 (목표까지 버튼은 꺼짐)")
     at.button(key="nav_players").click().run()
     check(not at.exception and any('class="fc-prow"' in m.value for m in at.markdown) or not at.session_state.get("pl_page") is None,
           "선수 찾기: 공식 스쿼드 메이커처럼 선수 줄 목록")
