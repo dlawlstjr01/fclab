@@ -8,7 +8,8 @@ from html import escape
 import streamlit as st
 
 from data_prep.nexon_api import split_spid
-from views.common import Ctx, get_player
+from data_prep.players import season_short
+from views.common import Ctx, card_ovrs, get_player
 
 # ── 강화 등급 고르기 ─────────────────────────────────────────────
 
@@ -172,18 +173,32 @@ def card_picker(ctx: Ctx, key: str, default_id: str | None = None, label: str = 
         return None
 
     name = ctx.catalog.by_spid[ctx.catalog.cards_of(pid)[0]]["name"]
-    cards = ctx.catalog.cards_of(pid)   # 이 선수의 시즌만
+    cards = ctx.catalog.cards_of(pid)   # 이 선수의 시즌만 (최신 시즌부터)
+    if st.session_state.get(card_key) not in cards:
+        st.session_state[card_key] = cards[0]
+    chosen = st.session_state[card_key]
 
-    def card_label(spid: int) -> str:
-        mark = " ✓분석" if str(spid) in ctx.by_id else ""   # by_id 에 SQLite 에 저장된 카드까지 들어 있다
-        return f"{season_name(ctx.catalog.season_name(spid))}{mark}"
+    def pick(spid: int) -> None:
+        st.session_state[card_key] = spid
 
-    who_col, season_col, again_col = st.columns([1.4, 2.6, 1], vertical_alignment="bottom")
-    who_col.markdown(f"**{name}** · 카드 {len(cards)}장")
-    card_args = {} if card_key in st.session_state else {"index": 0}   # 세션 값이 있으면 index 를 주지 않는다
-    spid = season_col.selectbox(f"{name}의 시즌", cards, key=card_key, format_func=card_label, **card_args)
+    who_col, again_col = st.columns([4, 1], vertical_alignment="bottom")
+    who_col.markdown(f"**{name}** · 카드 {len(cards)}장 — 시즌 카드를 눌러 고르세요 · 고른 카드: "
+                     f"**{season_name(ctx.catalog.season_name(chosen))}**")
     again_col.button("다시 고르기", key=f"{key}_again", on_click=reset, width="stretch")
-    return str(spid) if spid is not None else None
+    # 시즌마다 그 시즌 카드 배경 위 선수 액션샷 · OVR — 드롭다운 글자만으로는 어떤 카드인지 알기 어렵다
+    ovrs = card_ovrs(ctx, cards)
+    rows = -(-len(cards) // cols)
+    with st.container(key=f"grid_ssn_{key}", height=480 if rows > 2 else "content"):
+        for start in range(0, len(cards), cols):
+            for col, spid in zip(st.columns(cols), cards[start : start + cols]):
+                full = ctx.catalog.season_name(spid)
+                with col, st.container(key=f"tile_ssn_{key}_{spid}"):
+                    st.markdown(ui_parts.season_tile(ctx.catalog.basic_player(spid), season_short(full), full, ovrs.get(spid),
+                                                     on=spid == chosen, mark="✓분석" if str(spid) in ctx.by_id else ""),
+                                unsafe_allow_html=True)
+                    st.button(f"{season_short(full)} 고르기", key=f"{key}_c_{spid}", on_click=pick, args=(spid,),
+                              width="stretch")
+    return str(chosen)
 
 
 # ── 의미 검색 (이름으로 못 찾았을 때) ───────────────────────────────

@@ -239,6 +239,11 @@ div[class*="st-key-slide_prev_"] {{ animation: fc-from-left .38s ease-out; }}
 div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 .fc-tile.fc-person {{ min-height: 0; padding: 8px 8px 10px; }}
 .fc-tile.fc-person .ph img {{ max-height: 72px; border-radius: 50%; }}
+/* 선수 고르기의 시즌 카드 — 카드 그림이 칸 너비를 따른다, 고른 카드는 초록 테두리 */
+.fc-tile.fc-ssn {{ min-height: 0; padding: 6px 6px 8px; }}
+.fc-tile.fc-ssn .cvw {{ width: 100%; max-width: 116px; margin: 2px auto 2px; }}
+.fc-tile.fc-ssn .nm {{ font-size: 12.5px; }}
+.fc-tile.fc-ssn.on {{ border: 2px solid {ACCENT}; box-shadow: 0 0 0 3px rgba(22,224,138,.18); }}
 
 /* 큰 선수 카드 */
 .fc-card {{ position: relative; border-radius: 22px; padding: 16px 16px 18px; overflow: hidden; text-align: center;
@@ -793,6 +798,13 @@ def _tile_meta(pay: int | None, foot: dict | None) -> str:
     pay_html = f'<span class="fc-pay" title="급여">{pay}</span>' if pay is not None else '<span class="fc-pay wait">…</span>'
     foot_html = foot_text(foot) if foot else '<span class="foot">L? – R?</span>'
     return f'<div class="meta">{pay_html}{foot_html}</div>'
+
+
+def season_tile(player: dict, label: str, title: str, ovr: int | None = None, on: bool = False, mark: str = "") -> str:
+    """선수 고르기의 시즌 카드 — 그 시즌 카드 배경 위 선수 액션샷 · OVR · 시즌 이름. 고른 카드는 초록 테두리."""
+    return (f'<div class="fc-tile fc-ssn{" on" if on else ""}" title="{escape(title)}">'
+            f'<div class="cvw">{card_visual(player, ovr)}</div><div class="nm">{escape(label)}</div>'
+            + (f'<div class="sub">{escape(mark)}</div>' if mark else "") + "</div>")
 
 
 def person_tile(name: str, pid: int, card_count: int) -> str:

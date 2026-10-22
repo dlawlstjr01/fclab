@@ -654,9 +654,13 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     person_keys = [k for k in keys(at) if k.startswith("cmp_b_pick_p_")]
     check(bool(person_keys), f"비교 선택기: 이름 입력 → 이름이 들어간 선수 카드 {len(person_keys)}명")
     at.button(key=person_keys[0]).click().run()
-    seasons = at.selectbox(key="cmp_b_pick_card").options
-    check(len(seasons) >= 1 and at.session_state["cmp_b_pick_who"] == int(person_keys[0].rsplit("_", 1)[1]),
-          f"선수 카드를 누르면 그 선수의 시즌만 ({len(seasons)}개)")
+    seasons = [k for k in keys(at) if k.startswith("cmp_b_pick_c_")]
+    check(len(seasons) >= 1 and at.session_state["cmp_b_pick_who"] == int(person_keys[0].rsplit("_", 1)[1])
+          and any('class="fc-tile fc-ssn on"' in m.value and 'class="fc-cv' in m.value for m in at.markdown),
+          f"선수 카드를 누르면 그 선수의 시즌만 — 시즌마다 카드 그림(배경 · 액션샷)으로 ({len(seasons)}개)")
+    at.button(key=seasons[-1]).click().run()
+    check(at.session_state["cmp_b_pick_card"] == int(seasons[-1].rsplit("_", 1)[1]),
+          "시즌 카드 그림을 누르면 그 카드로 고른다")
 
     at.button(key="nav_home").click().run()
     at.text_input(key="q").input("대한민국 출신 공격수").run()
