@@ -421,8 +421,9 @@ def chips_html(view: dict, formation: str) -> str:
     return f'<div class="fc-sqchips">{"".join(parts)}</div>'
 
 
-def summary_html(view: dict) -> str:
-    """평균 OVR · 총 급여(게이지) · 최대 · 최소 급여 선수 · 팀컬러(소속 · 강화 · 특성 적용 인원) · 급여가 바뀐 선수."""
+def summary_html(view: dict, lead: str = "", avg_label: str = "평균 OVR (자리 · 강화 반영)") -> str:
+    """평균 OVR · 총 급여(게이지) · 최대 · 최소 급여 선수 · 팀컬러(소속 · 강화 · 특성 적용 인원) · 급여가 바뀐 선수.
+    lead 는 맨 앞에 더 넣을 칸 (AI 추천: 총 시세 / 예산)."""
     slots = view["slots"]
     avg = f"{view['avg']:.1f}{'' if view['all_exact'] else '*'}" if view["avg"] else "-"
     pay, cap = view["pay"], PAY_CAP
@@ -431,7 +432,8 @@ def summary_html(view: dict) -> str:
     if view["pay_known"] < view["filled"]:
         pay_note += f" · {view['filled'] - view['pay_known']}명 급여 받는 중"
     paid = [(s["pay"], code, s["player"]["name"]) for code, s in slots.items() if s["pay"] is not None]
-    cells = [f'<div><span>평균 OVR (자리 · 강화 반영)</span><b>{avg}</b> <small>{view["filled"]}/11명</small></div>',
+    cells = [lead] if lead else []
+    cells += [f'<div><span>{escape(avg_label)}</span><b>{avg}</b> <small>{view["filled"]}/11명</small></div>',
              f'<div><span>총 급여</span><b style="color:{"#ff6b6b" if over else "inherit"}">{pay}</b> '
              f'<small>/ {cap} · {pay_note}</small><div class="fc-gauge{" over" if over else ""}">'
              f'<i style="width:{min(100, round(100 * pay / cap))}%"></i></div></div>']
@@ -631,15 +633,23 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
     team = team_of(ctx, slots)
     exact_jobs = _teamcolor_ovrs(ctx, slots, team, settled(ctx, team))
     ovrs = [s["ovr"] for s in slots.values() if s["ovr"]]
+    for code, p in picks.items():   # 급여는 추천에 쓴 선수 검색 값 (스쿼드 메이커와 같은 요약 칸에 넣는다)
+        slots[code]["pay"] = p["card"].get("pay")
+    pays = [s["pay"] for s in slots.values() if s["pay"] is not None]
+    view = {"slots": slots, "team": team, "pay": sum(pays), "pay_known": len(pays), "filled": len(slots),
+            "avg": sum(ovrs) / len(ovrs) if ovrs else None, "all_exact": all(s["exact"] for s in slots.values())}
     team_text = ""
     if target:
         reached = f"{target['level']}단계" if target["level"] else "단계 미달"
-        team_text = f" · 목표 팀컬러 {target['name']} {target['members']}/{target['target']}명 {reached}"
+        team_text = f"목표 팀컬러 {target['name']} {target['members']}/{target['target']}명 {reached}"
     st.markdown(
         f'<div class="fc-section">📋 추천 스쿼드 — {escape(MODE_NAMES[result["mode"]])} · {escape(result["formation"])}'
-        f'<small>총 시세 {bp(result["total"])} / 예산 {bp(result["budget"])} · 총 급여 {result["pay"]} / {result["pay_cap"]}'
-        f'{f" · 평균 OVR {sum(ovrs) / len(ovrs):.1f} (자리 · 강화 · 팀컬러 반영)" if ovrs else ""}{escape(team_text)}</small></div>',
-        unsafe_allow_html=True)
+        f'<small>{escape(team_text)}</small></div>', unsafe_allow_html=True)
+    total, budget = result["total"], result["budget"]
+    spent = min(100, round(100 * total / budget)) if budget else 0
+    lead = (f'<div><span>총 시세</span><b>{escape(bp(total))}</b> <small>/ 예산 {escape(bp(budget))}</small>'
+            f'<div class="fc-gauge"><i style="width:{spent}%"></i></div></div>')
+    st.markdown(summary_html(view, lead=lead, avg_label="평균 OVR (자리 · 강화 · 팀컬러 반영)"), unsafe_allow_html=True)
     st.markdown(applied_html(team), unsafe_allow_html=True)
     for note in result["notes"]:
         st.caption(f"⚠️ {note}")
@@ -656,6 +666,7 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
     p_col, l_col = st.columns([1.1, 1], gap="medium")
     with p_col:
         pitch("ai_pitch", pitch_slots(result["slots"], cards, result["formation"], grades, slot_values, extras))
+        st.markdown(chips_html(view, result["formation"]), unsafe_allow_html=True)
     with l_col:
         for code in list_order(list(result["slots"]), result["formation"]):
             p = picks.get(code)

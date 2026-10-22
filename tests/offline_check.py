@@ -445,7 +445,7 @@ merged = dict(sorted_seasons(fake_catalog, -1))
 check(season_family("25IM - S&P (25 ICONS MATCH - Show & Prove)") == ("25IM", "25 ICONS MATCH")
       and merged.get((113, 114)) == "25IM (25 ICONS MATCH) · 5장" and (222,) in merged and (101,) in merged,
       f"시즌 고르기: 갈래만 다른 시즌(25IM - S&P · 25IM - FB)은 한 줄로 합친다, TOTY-N 은 따로 — {merged}")
-from views.tactics import applied_html, list_order, teamcolor_note  # noqa: E402
+from views.tactics import applied_html, list_order, summary_html, teamcolor_note  # noqa: E402
 
 check(list_order(FORMATIONS["4-2-3-1"], "4-2-3-1") == ["ST", "LAM", "CAM", "RAM", "LDM", "RDM", "LB", "LCB", "RCB", "RB", "GK"],
       "자리별 선수 목록은 FC 온라인처럼 공격수부터 (같은 줄은 왼쪽부터, 골키퍼가 맨 아래)")
@@ -605,6 +605,12 @@ check(">첼시</b>" in line and "4단계" in line and "전체 능력치 +4, 볼 
       and "적용되는 팀컬러 없음" in line and "2명의 팀컬러 정보를 받는 중" in line
       and teamcolor_note({"tc_bonus": {"applied": [chelsea]}}) == "🎨 첼시 4단계: 전체 능력치 +4, 볼 컨트롤 +3, 크로스 +3",
       "AI 추천 스쿼드 · 자리별 선수: 적용되는 팀컬러(소속 · 강화 · 특성)와 효과를 그대로 (전체 + 팀컬러별 능력치)")
+board = summary_html({"slots": {"RAM": {"pay": 33, "player": {"name": "카카"}}, "LAM": {"pay": 23, "player": {"name": "뎀벨레"}}},
+                      "team": {"groups": {}}, "pay": 56, "pay_known": 2, "filled": 2, "avg": 131.4, "all_exact": True},
+                     lead='<div><span>총 시세</span><b>6,499만</b></div>', avg_label="평균 OVR (자리 · 강화 · 팀컬러 반영)")
+check(board.index("총 시세") < board.index("평균 OVR") < board.index("총 급여") and ">56</b> <small>/ 310" in board
+      and "RAM 카카" in board and "자리 · 강화 · 팀컬러 반영" in board,
+      "AI 추천 스쿼드: 스쿼드 메이커와 같은 요약 칸 — 총 시세 / 예산 · 평균 OVR · 총 급여 / 310 (게이지) · 최대 · 최소 급여 선수")
 from services.teamcolor import squad_teamcolors  # noqa: E402
 
 grid = {pos: 100 for pos in OVR_GRID} | {"CAM": 120, "CM": 117}
