@@ -168,6 +168,8 @@ class MarketService:
         self._refresher.start()
 
     def _loop(self) -> None:
+        if hasattr(self.client, "set_priority"):   # 시세는 화면의 카드 상세 · 팀컬러 다음
+            self.client.set_priority(1)
         while True:
             with self._cv:
                 while not self._queue:

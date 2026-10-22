@@ -35,7 +35,7 @@ from services.squad import MODE_NAMES, PAY_CAP, SquadAdvisor, explain
 from services.teamcolor import GROUPS, effect_bonus, enhance_details, squad_teamcolors
 from views.common import Ctx, crests_of, dialog_open, enrich_many, friendly_error, get_player, go, log, render_sources
 from views.pitch import dropped, pitch, pitch_slots, slot_ovrs
-from views.widgets import card_picker, grade_buttons
+from views.widgets import card_picker, card_tiles, grade_buttons
 
 ATTACK = {"스트라이커", "윙어", "공격형 미드필더"}
 DEFENCE = {"센터백", "풀백", "수비형 미드필더"}
@@ -296,7 +296,7 @@ def squad_view(ctx: Ctx, codes: list[str], players: dict[str, dict | None], grad
         s["share"] = s["price"] / value * 100 if s["price"] and value else None
     team = team_of(ctx, slots)
     tc_ids = team["need_detail"]
-    exact_jobs = _teamcolor_ovrs(ctx, slots, team)
+    exact_jobs = _teamcolor_ovrs(ctx, slots, team, settled(ctx, team))
     pays = [s["pay"] for s in slots.values() if s["pay"] is not None]
     values = [s["ovr"] for s in slots.values() if s["ovr"]]
     loading_prices = sum(1 for s in no_price if ctx.market.loading_current(s)) if ctx.market.enabled else 0
@@ -318,6 +318,12 @@ def team_of(ctx: Ctx, slots: dict) -> dict:
     return team
 
 
+def settled(ctx: Ctx, team: dict) -> bool:
+    """팀컬러 인원 · 단계가 정해졌나 — 모든 선수의 팀컬러를 알고 단계를 받을 팀컬러가 없을 때.
+    그 전에는 카드 상세가 한 장 올 때마다 단계가 바뀌어, 그때마다 정확한 OVR 을 새로 묻느라 카드 상세가 밀렸다."""
+    return team["unknown"] == 0 and not ctx.teamcolors.pending(team["need_detail"])
+
+
 def applied_html(team: dict) -> str:
     """지금 적용되는 팀컬러를 한 줄씩 — 소속 · 강화 · 특성마다 이름 · 단계 · 인원 · 효과 (AI 추천 스쿼드 결과 위)."""
     lines = []
@@ -334,11 +340,12 @@ def applied_html(team: dict) -> str:
     return f'<div class="fc-tcline"><div class="t">🎨 적용 팀컬러</div>{"".join(lines)}{note}</div>'
 
 
-def _teamcolor_ovrs(ctx: Ctx, slots: dict, team: dict) -> list[tuple[int, tuple]]:
+def _teamcolor_ovrs(ctx: Ctx, slots: dict, team: dict, ask: bool = True) -> list[tuple[int, tuple]]:
     """적용되는 팀컬러(소속 · 강화 · 특성마다 하나)의 효과를 그 팀컬러에 든 선수의 자리 OVR 에 더한다 (공식 스쿼드 메이커처럼).
 
     '전체 능력치 +N' 은 OVR 에 그대로 +N. 특정 능력치만 오르는 효과는 포지션마다 OVR 에 미치는 정도가 달라, 데이터센터 계산을
-    뒤에서 받아 그 자리 포지션의 값으로 바꾼다 (받기 전에는 * 표시). 돌려주는 값: 아직 받는 중인 (카드, 조합)."""
+    뒤에서 받아 그 자리 포지션의 값으로 바꾼다 (받기 전에는 * 표시). ask=False(팀컬러 인원이 아직 바뀌는 중)면 받아 둔 것만
+    쓰고 새로 묻지 않는다. 돌려주는 값: 아직 받는 중인 (카드, 조합)."""
     applied = {group: next((e for e in team["groups"].get(group, []) if e["level"]), None) for group in GROUPS}
     waiting = []
     for code, s in slots.items():
@@ -359,7 +366,7 @@ def _teamcolor_ovrs(ctx: Ctx, slots: dict, team: dict) -> list[tuple[int, tuple]
                  (joined["강화"]["id"], joined["강화"]["level"]) if "강화" in joined else (0, 0),
                  joined["특성"]["id"] if "특성" in joined else 0)
         spid = int(s["player"]["player_id"])
-        grid = ((ctx.cards.exact(spid, combo) if specific else None) or {}).get("position_ovr") or {}
+        grid = ((ctx.cards.exact(spid, combo, ask=ask) if specific else None) or {}).get("position_ovr") or {}
         if BASE_POSITION.get(code, code) in grid:
             s["ovr"], s["exact"] = grid[BASE_POSITION.get(code, code)], True
         else:
@@ -621,7 +628,7 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
                     "ovr": p.get("ovr") or (p["card"].get("ovr") or 0) + GRADE_OVR[p["grade"]], "exact": p.get("exact", True)}
              for code, p in picks.items()}
     team = team_of(ctx, slots)
-    exact_jobs = _teamcolor_ovrs(ctx, slots, team)
+    exact_jobs = _teamcolor_ovrs(ctx, slots, team, settled(ctx, team))
     ovrs = [s["ovr"] for s in slots.values() if s["ovr"]]
     team_text = ""
     if target:
@@ -695,9 +702,6 @@ def _slot_editor(ctx: Ctx, code: str, slot: dict) -> None:
     _image_picker(ctx, code, player, entry)
 
 
-IMAGE_COLS = 4
-
-
 def _set_img(code: str, spid: int) -> None:
     if _squad().get(code):
         _squad()[code]["img"] = None if spid == OWN_IMAGE else spid
@@ -717,20 +721,13 @@ def _image_picker(ctx: Ctx, code: str, player: dict, entry: dict) -> None:
         st.caption("이 선수는 다른 시즌 카드(액션샷)가 없어 바꿀 이미지가 없습니다.")
         return
     current = entry.get("img") if entry.get("img") in others else OWN_IMAGE
-    options = [OWN_IMAGE] + others
-    rows = -(-len(options) // IMAGE_COLS)
-    with st.container(key=f"tac_imgs_{code}", height=430 if rows > 2 else "content"):
-        for start in range(0, len(options), IMAGE_COLS):
-            for col, choice in zip(st.columns(IMAGE_COLS), options[start:start + IMAGE_COLS]):
-                spid = own if choice == OWN_IMAGE else choice
-                label = "기본 (이 카드)" if choice == OWN_IMAGE else season_short(ctx.catalog.season_name(spid))
-                with col:
-                    st.markdown(ui_parts.card_visual({**player, "image": ACTION_IMAGE.format(spid=spid)})
-                                + f'<div class="fc-imgcap" title="{escape(ctx.catalog.season_name(spid))}">{escape(label)}</div>',
-                                unsafe_allow_html=True)
-                    on = choice == current
-                    st.button("✓ 사용 중" if on else "고르기", key=f"tac_img_{code}_{choice}", disabled=on, width="stretch",
-                              type="primary" if on else "secondary", on_click=_set_img, args=(code, choice))
+    items = []
+    for choice in [OWN_IMAGE] + others:   # 이 카드 배경 위에 그 시즌 액션샷 — 바꾸면 이렇게 보인다
+        spid = own if choice == OWN_IMAGE else choice
+        items.append((choice, {**player, "image": ACTION_IMAGE.format(spid=spid)},
+                      "기본" if choice == OWN_IMAGE else season_short(ctx.catalog.season_name(spid)),
+                      ctx.catalog.season_name(spid) + (" (이 카드)" if choice == OWN_IMAGE else ""), None))
+    card_tiles(f"tac_img_{code}", items, current, lambda choice: _set_img(code, choice))
 
 
 def _remove(code: str) -> None:
@@ -777,9 +774,11 @@ def _slot_list(ctx: Ctx, codes: list[str], view: dict) -> None:
                 _slot_editor(ctx, code, slot)
                 st.divider()
             card_picker(ctx, key=pick_key, default_id=current, label="바꿀" if slot else "넣을")
-            grade_buttons("넣을 카드의 강화", f"{pick_key}_grade")
-            st.button("이 카드로 바꾸기" if slot else f"{code} 자리에 넣기", key=f"tac_apply_{code}", type="primary",
-                      on_click=_apply, args=(code, pick_key))
+            g_col, b_col = st.columns([3.2, 1], vertical_alignment="bottom")   # 강화 버튼 줄 오른쪽에 넣기 버튼
+            with g_col:
+                grade_buttons("넣을 카드의 강화", f"{pick_key}_grade")
+            b_col.button("이 카드로 바꾸기" if slot else f"{code} 자리에 넣기", key=f"tac_apply_{code}", type="primary",
+                         on_click=_apply, args=(code, pick_key), width="stretch")
         pop_col.button("✕ 빼기", key=f"tac_remove_{code}", width="stretch", on_click=_remove, args=(code,),
                        disabled=not slot, help=f"{code} 자리의 선수를 뺍니다 (자리는 비워 둡니다)")
 

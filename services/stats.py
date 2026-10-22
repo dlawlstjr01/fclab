@@ -190,6 +190,8 @@ class StatsCrawler:
         return None
 
     def _loop(self) -> None:
+        if hasattr(self.client, "set_priority"):   # 화면 · 시세 요청이 없을 때만 (data_prep/datacenter.QUIET)
+            self.client.set_priority(2)
         while not self._stop.is_set():
             try:
                 job = self.next_job()

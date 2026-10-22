@@ -561,6 +561,46 @@ dense_parts = sdb.crawl_parts(401)
 check(len(got) == 4500 and all(p["cards"] < PAGE for p in dense_parts) and any(":h" in p["part"] for p in dense_parts),
       f"OVR 하나가 200장을 넘어도 키 구간으로 반씩 나눠 빠짐없이 받는다 ({len(got)}/4500장 · 조각 {len(dense_parts)}개 · "
       f"요청 {dense.calls}번)")
+import threading as _threading  # noqa: E402
+
+import data_prep.datacenter as dcm  # noqa: E402
+
+turn_client = dcm.DatacenterClient(1.0)
+turn_client.allowed = lambda path="": True
+sent: list[str] = []
+
+
+def _fake_send(path, data, method):
+    sent.append(_threading.current_thread().name)
+    _time.sleep(0.05)
+    return ""
+
+
+turn_client._send = _fake_send
+
+
+def _bulk():
+    turn_client.set_priority(dcm.BULK)
+    for _ in range(6):
+        turn_client._post("/x", {})
+
+
+def _screen():
+    for _ in range(3):
+        turn_client._post("/x", {})
+        _time.sleep(0.1)   # 카드 상세 두 번 사이처럼 잠깐 쉬어도
+
+
+with patch.object(dcm, "QUIET", 0.4):
+    bulk_t, screen_t = _threading.Thread(target=_bulk, name="bulk"), _threading.Thread(target=_screen, name="screen")
+    bulk_t.start()
+    _time.sleep(0.12)
+    screen_t.start()
+    screen_t.join()
+    bulk_t.join()
+first, last = sent.index("screen"), len(sent) - 1 - sent[::-1].index("screen")
+check(sent[first:last + 1] == ["screen"] * 3 and sent.count("bulk") == 6,
+      f"데이터센터 창구 순서: 화면 요청(카드 상세 · 팀컬러)이 오면 능력치 모으기는 끝날 때까지 끼어들지 않는다 ({' '.join(sent)})")
 sdb.put_crawl_part("402:ST:60-60", 402, {"position": "ST", "ovr_min": 60, "ovr_max": 60}, PAGE, 1)   # 예전 방식의 '일부만' 조각
 check(StatsCrawler(dense, sdb, interval=0).next_job() == ("split", 402),
       "예전에 OVR 하나가 200장을 넘어 일부만 받은 시즌은 먼저 다시 나눈다 (빠진 카드까지)")

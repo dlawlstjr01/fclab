@@ -333,8 +333,16 @@ def parse_boost(text: str) -> dict | None:
     return {"boost": float(boost.group(1)), "materials_bp": int(total.group(1).replace(",", "")) if total else None}
 
 
+SCREEN, MARKET, BULK = 0, 1, 2   # 요청 순서 — 화면(카드 상세 · 팀컬러 · 추가 능력치 · AI 추천) > 시세 > 능력치 모으기
+QUIET = 2.5   # 앞 순서의 요청이 끝나고 이만큼 조용해야 뒤 순서가 보낸다 (한 장에 두 번 묻는 카드 상세 사이에 끼지 않게)
+
+
 class DatacenterClient:
-    """데이터센터 요청 — 스레드가 여럿이어도 요청은 한 줄로, interval 초 간격 (1초보다 짧게는 안 보낸다)."""
+    """데이터센터 요청 — 스레드가 여럿이어도 요청은 한 줄로, interval 초 간격 (1초보다 짧게는 안 보낸다).
+
+    스레드마다 순서(set_priority)가 있어, 화면이 기다리는 요청(카드 상세 · 팀컬러)이 있거나 방금 있었으면 시세 ·
+    능력치 모으기는 기다린다 — 한 창구를 나눠 쓰느라 선수 정보 · 팀컬러가 늦게 뜨던 것을 막는다. 순서를 정하지 않은
+    스레드(화면 스크립트 · 카드 상세 · 팀컬러)는 화면 순서."""
 
     def __init__(self, interval: float = 1.2, timeout: float = 15):
         self.interval = max(1.0, interval)
@@ -344,6 +352,30 @@ class DatacenterClient:
         self._lock = threading.Lock()
         self._last = 0.0
         self._robots: robotparser.RobotFileParser | None = None
+        self._local = threading.local()
+        self._turn = threading.Condition()
+        self._waiting = [0, 0, 0]          # 순서마다 기다리는 요청 수
+        self._used = [-QUIET] * 3          # 순서마다 마지막으로 보낸 때
+
+    def set_priority(self, level: int) -> None:
+        """이 스레드가 보내는 요청의 순서 — SCREEN(기본) · MARKET · BULK."""
+        self._local.level = level
+
+    def _wait_turn(self, level: int) -> None:
+        """앞 순서가 기다리거나 QUIET 초 안에 보냈으면 기다린다."""
+        if level == SCREEN:
+            return
+        with self._turn:
+            self._waiting[level] += 1
+            try:
+                while True:
+                    now = time.monotonic()
+                    ahead = [self._waiting[i] or now - self._used[i] < QUIET for i in range(level)]
+                    if not any(ahead):
+                        return
+                    self._turn.wait(0.3)
+            finally:
+                self._waiting[level] -= 1
 
     def allowed(self, path: str = PRICE_PATH) -> bool:
         """robots.txt 가 이 경로를 허용하나 — 한 번만 받아 둔다. 읽지 못하면 허용하지 않은 것으로 본다."""
@@ -360,6 +392,21 @@ class DatacenterClient:
     def _post(self, path: str, data: dict, method: str = "POST") -> str:
         if not self.allowed(path):
             raise MarketBlocked("robots.txt 를 확인하지 못했거나 허용되지 않은 경로입니다.")
+        level = getattr(self._local, "level", SCREEN)
+        if level == SCREEN:
+            with self._turn:
+                self._waiting[SCREEN] += 1
+        try:
+            self._wait_turn(level)
+            return self._send(path, data, method)
+        finally:
+            with self._turn:
+                if level == SCREEN:
+                    self._waiting[SCREEN] -= 1
+                self._used[level] = time.monotonic()
+                self._turn.notify_all()
+
+    def _send(self, path: str, data: dict, method: str) -> str:
         error: Exception | None = None
         for attempt in range(2):
             with self._lock:

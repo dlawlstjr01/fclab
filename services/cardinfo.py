@@ -91,11 +91,11 @@ class CardInfoService:
         grade, adapt, (tid, tlv), (eid, elv), feature = combo
         return f"ability2:{spid}:{grade}:{adapt}:{tid}:{tlv}:{eid}:{elv}:{feature}"
 
-    def exact(self, spid: int, combo: tuple) -> dict | None:
+    def exact(self, spid: int, combo: tuple, ask: bool = True) -> dict | None:
         """데이터센터가 계산한 추가 능력치(받아 둔 것) — 없으면 뒤에서 받기 시작하고 None (화면은 bonus_stats 로 먼저).
-        combo = (강화, 적응도, (소속 팀컬러, 단계), (강화 팀컬러, 단계), 특성 팀컬러)."""
+        combo = (강화, 적응도, (소속 팀컬러, 단계), (강화 팀컬러, 단계), 특성 팀컬러). ask=False 면 받아 둔 것만."""
         data = self.db.dc_get(self._exact_key(spid, combo), 24 * KEEP_DAYS)
-        if data is None and self.enabled:
+        if data is None and self.enabled and ask:
             with self._cv:
                 if self._exact_running != (spid, combo):
                     self._exact[spid] = combo

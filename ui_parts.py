@@ -240,10 +240,11 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 .fc-tile.fc-person {{ min-height: 0; padding: 8px 8px 10px; }}
 .fc-tile.fc-person .ph img {{ max-height: 72px; border-radius: 50%; }}
 /* 선수 고르기의 시즌 카드 — 카드 그림이 칸 너비를 따른다, 고른 카드는 초록 테두리 */
-.fc-tile.fc-ssn {{ min-height: 0; padding: 6px 6px 8px; }}
-.fc-tile.fc-ssn .cvw {{ width: 100%; max-width: 116px; margin: 2px auto 2px; }}
-.fc-tile.fc-ssn .nm {{ font-size: 12.5px; }}
-.fc-tile.fc-ssn.on {{ border: 2px solid {ACCENT}; box-shadow: 0 0 0 3px rgba(22,224,138,.18); }}
+.fc-tile.fc-ssn {{ min-height: 0; padding: 3px 3px 4px; border-radius: 10px; }}
+.fc-tile.fc-ssn .cvw {{ width: 100%; margin: 0 auto; }}
+.fc-tile.fc-ssn .nm {{ font-size: 10.5px; line-height: 1.3; }}
+.fc-tile.fc-ssn.on {{ border: 2px solid {ACCENT}; box-shadow: 0 0 0 2px rgba(22,224,138,.18); }}
+div[class*="st-key-tile_ssn_"] {{ margin-bottom: 0; }}
 
 /* 큰 선수 카드 */
 .fc-card {{ position: relative; border-radius: 22px; padding: 16px 16px 18px; overflow: hidden; text-align: center;
@@ -279,8 +280,6 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
 .fc-prow .l4 span {{ white-space: nowrap; }}
 .fc-prow .l4 b {{ color: {t['ink']}; font-weight: 700; }}
 .fc-prow .l4 b.up {{ color: {ACCENT}; }}
-.fc-imgcap {{ font-size: 11.5px; font-weight: 700; text-align: center; color: {t['ink2']}; white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; margin: 2px 0 4px; }}
 .fc-prow .note {{ font-size: 12px; color: {t['ink2']}; margin-top: 4px; }}
 .fc-prow .side {{ display: flex; align-items: center; gap: 12px; }}
 .fc-prow .traits {{ display: flex; align-items: center; gap: 4px; }}
@@ -803,8 +802,7 @@ def _tile_meta(pay: int | None, foot: dict | None) -> str:
 def season_tile(player: dict, label: str, title: str, ovr: int | None = None, on: bool = False, mark: str = "") -> str:
     """선수 고르기의 시즌 카드 — 그 시즌 카드 배경 위 선수 액션샷 · OVR · 시즌 이름. 고른 카드는 초록 테두리."""
     return (f'<div class="fc-tile fc-ssn{" on" if on else ""}" title="{escape(title)}">'
-            f'<div class="cvw">{card_visual(player, ovr)}</div><div class="nm">{escape(label)}</div>'
-            + (f'<div class="sub">{escape(mark)}</div>' if mark else "") + "</div>")
+            f'<div class="cvw">{card_visual(player, ovr)}</div><div class="nm">{escape(label)}{escape(mark)}</div></div>')
 
 
 def person_tile(name: str, pid: int, card_count: int) -> str:

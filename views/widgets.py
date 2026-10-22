@@ -181,24 +181,37 @@ def card_picker(ctx: Ctx, key: str, default_id: str | None = None, label: str = 
     def pick(spid: int) -> None:
         st.session_state[card_key] = spid
 
-    who_col, again_col = st.columns([4, 1], vertical_alignment="bottom")
-    who_col.markdown(f"**{name}** · 카드 {len(cards)}장 — 시즌 카드를 눌러 고르세요 · 고른 카드: "
-                     f"**{season_name(ctx.catalog.season_name(chosen))}**")
+    who_col, again_col = st.columns([4, 1], vertical_alignment="center")
+    who_col.markdown(f"**{name}** · {len(cards)}장 · 고른 카드 **{season_short(ctx.catalog.season_name(chosen))}**")
     again_col.button("다시 고르기", key=f"{key}_again", on_click=reset, width="stretch")
     # 시즌마다 그 시즌 카드 배경 위 선수 액션샷 · OVR — 드롭다운 글자만으로는 어떤 카드인지 알기 어렵다
     ovrs = card_ovrs(ctx, cards)
-    rows = -(-len(cards) // cols)
-    with st.container(key=f"grid_ssn_{key}", height=480 if rows > 2 else "content"):
-        for start in range(0, len(cards), cols):
-            for col, spid in zip(st.columns(cols), cards[start : start + cols]):
-                full = ctx.catalog.season_name(spid)
-                with col, st.container(key=f"tile_ssn_{key}_{spid}"):
-                    st.markdown(ui_parts.season_tile(ctx.catalog.basic_player(spid), season_short(full), full, ovrs.get(spid),
-                                                     on=spid == chosen, mark="✓분석" if str(spid) in ctx.by_id else ""),
-                                unsafe_allow_html=True)
-                    st.button(f"{season_short(full)} 고르기", key=f"{key}_c_{spid}", on_click=pick, args=(spid,),
-                              width="stretch")
+    items = []
+    for spid in cards:
+        full = ctx.catalog.season_name(spid)
+        items.append((spid, ctx.catalog.basic_player(spid), season_short(full),
+                      full + (" · 분석된 카드" if str(spid) in ctx.by_id else ""), ovrs.get(spid)))
+    card_tiles(f"{key}_c", items, chosen, pick)
     return str(chosen)
+
+
+TILE_WIDTH = 78     # 카드 그림 타일 한 칸 (px) — 작게, 칸이 좁으면 줄을 바꿔 채운다
+SCROLL_AFTER = 14   # 이보다 많으면 높이를 묶고 스크롤 (두 줄 남짓)
+
+
+def card_tiles(prefix: str, items: list[tuple], chosen, on_pick) -> None:
+    """카드 그림 타일 묶음 — items = [(값, 선수 dict, 이름, 설명, OVR)]. 타일을 누르면 on_pick(값), 고른 것은 초록 테두리.
+    st.columns 대신 고정 너비 타일을 가로로 이어 붙여 줄바꿈 — 칸이 좁아져도 마지막 카드가 한 줄을 다 차지하지 않는다.
+    버튼 키는 f"{prefix}_{값}" (타일 전체가 버튼 — ui_parts.css 의 .st-key-tile_*)."""
+    import ui_parts   # 순환 import 를 피하려고 여기서
+
+    with st.container(key=f"grid_ssn_{prefix}", height=262 if len(items) > SCROLL_AFTER else "content"):
+        with st.container(horizontal=True, gap="small", key=f"row_ssn_{prefix}"):
+            for value, player, label, title, ovr in items:
+                with st.container(key=f"tile_ssn_{prefix}_{value}", width=TILE_WIDTH):
+                    st.markdown(ui_parts.season_tile(player, label, title, ovr, on=value == chosen), unsafe_allow_html=True)
+                    st.button(f"{label} 고르기", key=f"{prefix}_{value}", on_click=on_pick, args=(value,),
+                              disabled=value == chosen)
 
 
 # ── 의미 검색 (이름으로 못 찾았을 때) ───────────────────────────────
