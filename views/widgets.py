@@ -61,9 +61,18 @@ def season_name(class_name: str) -> str:
     return class_name
 
 
+def season_family(class_name: str) -> tuple[str, str]:
+    """한 시즌의 갈래들을 하나로 묶을 이름 — '25IM - S&P (25 ICONS MATCH - Show & Prove)' · '25IM - FB (…)' →
+    ('25IM', '25 ICONS MATCH'). 사람들은 갈래를 나눠 찾지 않는다. '20 TOTY-N' 처럼 띄어 쓰지 않은 '-' 는 다른 시즌이다."""
+    m = re.match(r"^(.*?)\s*\((.*)\)\s*$", class_name)
+    short, long = (m.group(1), m.group(2)) if m else (class_name, "")
+    return short.split(" - ")[0].strip(), long.split(" - ")[0].strip()
+
+
 @st.cache_data(show_spinner=False)
-def sorted_seasons(_catalog, count_key: int) -> list[tuple[int, str]]:
-    """[(시즌 ID, 보여 줄 이름)] — ICON 계열 → 연도 최신순(같은 해는 최근 출시순)."""
+def sorted_seasons(_catalog, count_key: int) -> list[tuple[tuple[int, ...], str]]:
+    """[(시즌 ID 들, 보여 줄 이름)] — ICON 계열 → 연도 최신순(같은 해는 최근 출시순).
+    갈래만 다른 시즌(25IM - S&P · 25IM - FB)은 한 줄로 합친다 — 고르면 갈래 모두."""
     counts: dict[int, int] = {}
     for c in _catalog.cards:
         sid = split_spid(c["id"])[0]
@@ -81,14 +90,27 @@ def sorted_seasons(_catalog, count_key: int) -> list[tuple[int, str]]:
 
     icons = sorted(sid for sid, name in seasons.items() if "ICON" in name.upper())
     others = sorted((sid for sid in seasons if sid not in icons), key=lambda sid: (-year_of(sid), -sid))
-    return [(sid, f"{season_name(seasons[sid])} · {counts[sid]:,}장") for sid in icons + others]
+    families: dict[str, list[int]] = {}   # 먼저 나온 갈래의 자리에 — 순서는 위 정렬 그대로
+    for sid in icons + others:
+        families.setdefault(season_family(seasons[sid])[0], []).append(sid)
+    out = []
+    for sids in families.values():
+        if len(sids) == 1:
+            out.append(((sids[0],), f"{season_name(seasons[sids[0]])} · {counts[sids[0]]:,}장"))
+            continue
+        short, long = season_family(seasons[sids[0]])
+        out.append((tuple(sorted(sids)), f"{short} ({long}) · {sum(counts[s] for s in sids):,}장"))
+    return out
 
 
-def season_select(ctx: Ctx, key: str, label: str = "시즌", all_label: str = "전체 시즌") -> int | None:
+def season_select(ctx: Ctx, key: str, label: str = "시즌", all_label: str = "전체 시즌") -> tuple[int, ...] | None:
+    """고른 시즌의 ID 들 (갈래를 합친 시즌이면 여럿) — 전체면 None."""
     options = sorted_seasons(ctx.catalog, len(ctx.catalog.cards))
     labels = dict(options)
-    return st.selectbox(label, [None] + [sid for sid, _ in options], key=key, label_visibility="collapsed",
-                        format_func=lambda sid: all_label if sid is None else labels[sid],
+    if st.session_state.get(key) is not None and st.session_state[key] not in labels:   # 예전 값(시즌 ID 하나) · 사라진 시즌
+        st.session_state[key] = next((ids for ids in labels if st.session_state[key] in ids), None)
+    return st.selectbox(label, [None] + [ids for ids, _ in options], key=key, label_visibility="collapsed",
+                        format_func=lambda ids: all_label if ids is None else labels[ids],
                         placeholder="시즌 (이름을 쳐서 찾을 수 있어요)")
 
 

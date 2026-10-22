@@ -4,6 +4,8 @@
 - 시즌 하나가 200장 안쪽이면 시즌 전체가 한 조각.
 - 넘으면 포지션별로, 포지션도 넘으면 OVR 구간으로 — OVR 높은 순으로 200장을 받아 가장 낮은 OVR 을 m 이라 하면
   m 보다 높은 카드는 모두 받은 것이다 (구간 [m+1, 위]). 다음은 m 이하로 다시 묻는다.
+- OVR 하나가 200장을 넘으면(LIVE 시즌의 낮은 OVR — 예: '25 LIVE ST OVR 60 은 228장) 키 구간을 반씩 나눠 묻고,
+  키 1cm 도 넘으면 몸무게 구간으로 — 빠지는 카드 없이 모두 받는다.
 - 조각마다 능력치 칸(한 번에 4개)을 바꿔 9번 물으면 36칸(능력치 34 + 키 · 몸무게)이 다 모인다.
   첫 번(나누기)에 OVR · 급여 · 포지션과 속력 · 가속력 · 골 결정력 · 짧은 패스가 먼저 채워진다.
 
@@ -28,6 +30,7 @@ from data_prep.market import MarketBlocked
 log = logging.getLogger("fclab.stats")
 
 PAGE = 200   # 선수 검색 한 번에 오는 최대 장수
+SPLITS = (("height", 100, 250), ("weight", 30, 150))   # OVR 하나가 200장을 넘을 때 반씩 나눌 칸 (cm · kg, 넉넉한 범위)
 PASSES = (   # 능력치 칸 묶음 — 쓸모가 큰 것부터
     ("sprintspeed", "acceleration", "finishing", "shortpassing"),
     ("dribbling", "ballcontrol", "marking", "standingtackle"),
@@ -43,7 +46,11 @@ assert len(PASSES) == STAT_PASSES
 
 
 def part_key(season: int, flt: dict) -> str:
-    return f"{season}:{flt.get('position') or '*'}:{flt.get('ovr_min') or ''}-{flt.get('ovr_max') or ''}"
+    key = f"{season}:{flt.get('position') or '*'}:{flt.get('ovr_min') or ''}-{flt.get('ovr_max') or ''}"
+    for name, _, _ in SPLITS:
+        if flt.get(name):
+            key += f":{name[0]}{flt[name][0]}-{flt[name][1]}"
+    return key
 
 
 class StatsCrawler:
@@ -71,7 +78,8 @@ class StatsCrawler:
 
     def _list(self, season: int, flt: dict, skills: tuple[str, ...]) -> list[dict]:
         rows = self.client.player_list(seasons=[season], positions=[flt["position"]] if flt.get("position") else None,
-                                       ovr_min=flt.get("ovr_min"), ovr_max=flt.get("ovr_max"), skills=skills)
+                                       ovr_min=flt.get("ovr_min"), ovr_max=flt.get("ovr_max"), skills=skills,
+                                       **{name: tuple(flt[name]) for name, _, _ in SPLITS if flt.get(name)})
         self._stop.wait(self.interval)   # 화면이 보낸 요청(시세 · 카드 상세)이 먼저 지나가게
         return rows
 
@@ -94,13 +102,32 @@ class StatsCrawler:
                 out.append(({**flt, "ovr_min": None}, rows))
                 break
             low = min(r["ovr"] or 0 for r in rows)
-            if low == max(r["ovr"] or 0 for r in rows):   # 같은 OVR 이 200장을 넘는다 — 이 OVR 은 받은 만큼만
-                log.warning("시즌 %s %s OVR %s 카드가 %s장을 넘어 일부만 받았습니다", season, position, low, PAGE)
-                out.append(({**flt, "ovr_min": low}, rows))
+            if low == max(r["ovr"] or 0 for r in rows):   # 같은 OVR 이 200장을 넘는다 — 키 · 몸무게 구간으로 더 나눈다
+                out += self._dense(season, {"position": position, "ovr_min": low, "ovr_max": low})
                 top = low - 1
                 continue
             out.append(({**flt, "ovr_min": low + 1}, [r for r in rows if (r["ovr"] or 0) > low]))
             top = low
+        return out
+
+    def _dense(self, season: int, flt: dict, depth: int = 0) -> list[tuple[dict, list[dict]]]:
+        """OVR 하나가 200장을 넘는 조각 — SPLITS[depth] 칸(키 → 몸무게)의 구간을 반씩 나눠 200장 안쪽 조각들로."""
+        name, low, high = SPLITS[depth]
+        out, stack = [], [(low, high)]
+        while stack and not self._stop.is_set():
+            lo, hi = stack.pop()
+            part = {**flt, name: [lo, hi]}
+            rows = self._list(season, part, PASSES[0])
+            if len(rows) < PAGE:
+                out.append((part, rows))
+            elif lo < hi:
+                mid = (lo + hi) // 2
+                stack += [(mid + 1, hi), (lo, mid)]   # 낮은 쪽부터
+            elif depth + 1 < len(SPLITS):
+                out += self._dense(season, part, depth + 1)
+            else:   # 키 · 몸무게까지 같은 카드가 200장 넘게 — 사실상 없다
+                log.warning("시즌 %s %s 카드가 %s장을 넘어 일부만 받았습니다", season, part_key(season, part), PAGE)
+                out.append((part, rows))
         return out
 
     def _split(self, season: int) -> None:
@@ -137,7 +164,8 @@ class StatsCrawler:
     # ── 할 일 고르기 ─────────────────────────────────────────────
 
     def next_job(self):
-        """('split', 시즌) · ('fill', 조각) 또는 None — 새 시즌 · 안 나눈 시즌 → 남은 칸 → 오래된 시즌 · 새 카드가 생긴 시즌."""
+        """('split', 시즌) · ('fill', 조각) 또는 None — 새 시즌 · 안 나눈 시즌 → 일부만 받은 시즌 → 남은 칸 →
+        오래된 시즌 · 새 카드가 생긴 시즌."""
         parts = self.db.crawl_parts()
         split_at: dict[int, str] = {}
         for p in parts:
@@ -146,6 +174,11 @@ class StatsCrawler:
         for season in seasons:
             if season not in split_at:
                 return "split", season
+        # 예전에 OVR 하나가 200장을 넘어 일부만 받은 조각(키 · 몸무게로 나누기 전)이 있는 시즌 — 다시 나눠 빠진 카드까지
+        partial = sorted({p["season"] for p in parts if p["cards"] >= PAGE and not any(p["filter"].get(n) for n, _, _ in SPLITS)},
+                         reverse=True)
+        if partial:
+            return "split", partial[0]
         todo = [p for p in parts if p["passes"] < len(PASSES)]
         if todo:
             return "fill", max(todo, key=lambda p: (p["season"], -p["passes"]))

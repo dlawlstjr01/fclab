@@ -85,7 +85,7 @@ def render(ctx: Ctx) -> None:
     if needs_stats or not (name.strip() or season):
         # 랭커 기록으로 거르기 · 정렬 — 분석된 카드 안에서
         pool = [p for p in ctx.players if (not name.strip() or name.strip().replace(" ", "") in p["name"].replace(" ", ""))
-                and (season is None or p["season_id"] == season)
+                and (season is None or p["season_id"] in season)
                 and (group is None or p.get("position_group") == group)
                 and (kind in (None, "전체") or (kind == "레전드") == ("ICON" in p["season"]))]
         pool = with_saves(ctx, pool)

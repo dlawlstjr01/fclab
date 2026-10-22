@@ -32,7 +32,8 @@ CARD_CSS = """
 .fc-cv { --x0: .19; --y0: .1; --w: .62; --h: .79; position: relative; width: 100%; aspect-ratio: 340 / 400;
   background: center / contain no-repeat; container-type: inline-size; }
 .fc-cv.nobg { background: radial-gradient(120% 90% at 50% 0%, #2b4a7d 0%, #142441 60%, #0b1426 100%); border-radius: 12%; }
-.fc-cv .fig { position: absolute; left: calc(var(--x0) * 100% + var(--w) * 24%); width: calc(var(--w) * 78%);
+/* 선수는 카드 몸통 가운데 — (100% - 78%) / 2 = 11% 에서 시작 (예전 24% 는 오른쪽으로 치우쳐 보였다) */
+.fc-cv .fig { position: absolute; left: calc(var(--x0) * 100% + var(--w) * 11%); width: calc(var(--w) * 78%);
   top: calc(var(--y0) * 100% + var(--h) * 6%); height: calc(var(--h) * 72%); display: flex; align-items: flex-end;
   justify-content: center; }
 .fc-cv .fig img, .fc-cv .fig object { max-width: 100%; max-height: 100%; filter: drop-shadow(0 6px 10px rgba(0,0,0,.45)); }
@@ -272,6 +273,9 @@ div[class*="st-key-tile_"] {{ margin-bottom: 10px; }}
   font-variant-numeric: tabular-nums; }}
 .fc-prow .l4 span {{ white-space: nowrap; }}
 .fc-prow .l4 b {{ color: {t['ink']}; font-weight: 700; }}
+.fc-prow .l4 b.up {{ color: {ACCENT}; }}
+.fc-imgcap {{ font-size: 11.5px; font-weight: 700; text-align: center; color: {t['ink2']}; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; margin: 2px 0 4px; }}
 .fc-prow .note {{ font-size: 12px; color: {t['ink2']}; margin-top: 4px; }}
 .fc-prow .side {{ display: flex; align-items: center; gap: 12px; }}
 .fc-prow .traits {{ display: flex; align-items: center; gap: 4px; }}
@@ -350,6 +354,17 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-tc .none {{ margin-top: 8px; font-size: 12px; color: {t['muted']}; }}
 .fc-tc .others {{ margin-top: 6px; font-size: 11px; color: {t['muted']}; }}
 @media (max-width: 760px) {{ .fc-tc {{ grid-template-columns: 1fr; }} }}
+/* AI 추천 스쿼드 위 — 적용되는 팀컬러 한 줄씩 */
+.fc-tcline {{ border-radius: 12px; padding: 10px 14px; margin: 4px 0 10px; background: {t['track']}; }}
+.fc-tcline .t {{ font-size: 13px; font-weight: 800; color: {t['ink']}; margin-bottom: 2px; }}
+.fc-tcline > div:not(.t) {{ display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; margin-top: 4px; font-size: 13px;
+  color: {t['ink2']}; }}
+.fc-tcline .g {{ min-width: 30px; font-size: 11px; font-weight: 800; color: {t['muted']}; }}
+.fc-tcline img {{ width: 22px; height: 22px; object-fit: contain; }}
+.fc-tcline b {{ color: {t['ink']}; }}
+.fc-tcline .lv {{ padding: 0 6px; border-radius: 6px; font-size: 10.5px; font-weight: 900; color: #0b1426; background: {ACCENT}; }}
+.fc-tcline .eff {{ font-weight: 700; color: {t['ink']}; }}
+.fc-tcline .none {{ color: {t['muted']}; }}
 .fc-ovrgrid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }}
 .fc-ovrgrid div {{ border-radius: 10px; padding: 6px 4px; text-align: center; background: {t['track']}; }}
 .fc-ovrgrid div span {{ display: block; font-size: 11px; font-weight: 800; }}
@@ -629,12 +644,14 @@ def foot_text(foot: dict | None) -> str:
 def card_row(player: dict, info: dict | None = None, *, grade: int | None = None, ovr: int | None = None,
              position: str | None = None, pay: int | None = None, foot: dict | None = None,
              crests: list[tuple[str, str]] = (), exact: bool = True, note: str = "", ovr_label: str = "",
-             wait_text: str = "국적 · 팀컬러 불러오는 중…", compact: bool = False) -> str:
+             wait_text: str = "국적 · 팀컬러 불러오는 중…", compact: bool = False,
+             tc_summary: dict[str, int] | None = None) -> str:
     """선수 줄 (공식 스쿼드 메이커의 선수 목록처럼) — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 / 시즌 이름 · 주발 /
     국적 · 팀컬러 / 요약 능력치(강화 반영) / 특성 · OVR. info(카드 상세)가 아직 없으면 그 칸은 '불러오는 중'.
 
     compact = 좁은 칸(스쿼드 메이커의 자리별 선수 · AI 추천 결과)용 — 오른쪽에는 OVR 만 두고 특성은 아래 줄로 내려,
-    가운데 글자 칸이 넓어진다. 이름은 한 줄(넘치면 …), 시즌 · 급여 · 강화 · 주발은 덩어리째 줄을 바꾼다."""
+    가운데 글자 칸이 넓어진다. 이름은 한 줄(넘치면 …), 시즌 · 급여 · 강화 · 주발은 덩어리째 줄을 바꾼다.
+    tc_summary = 팀컬러로 더 오른 요약 능력치 {스피드: +N} (스쿼드 메이커) — 더해서 초록으로 보인다."""
     info = info or {}
     grade = grade or 1
     position = position or info.get("position") or ""
@@ -649,7 +666,9 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
     summary = info.get("summary") or {}
     bonus = GRADE_OVR[grade]
     # 능력치 하나('속력 120')는 한 덩어리 — 줄을 바꿔도 이름과 숫자가 갈라지지 않게
-    l4 = "".join(f"<span>{k} <b>{v + bonus}</b></span>" for k, v in summary.items() if k in SUMMARY)
+    up = tc_summary or {}
+    l4 = "".join(f'<span>{k} <b class="up" title="팀컬러 +{up[k]}">{v + bonus + up[k]}</b></span>' if up.get(k)
+                 else f"<span>{k} <b>{v + bonus}</b></span>" for k, v in summary.items() if k in SUMMARY)
     traits = info.get("traits") or []
     trait_html = "".join(f'<img class="{"new" if t["new"] else ""}" src="{escape(image(t["icon"]))}" alt="{escape(t["name"])}" '
                          f'title="{escape(t["name"])}{" (신규 특성)" if t["new"] else ""}">' for t in traits[:5])

@@ -507,24 +507,24 @@ def _learn_ovrs(ctx: Ctx, query: str) -> None:
     ctx.db.dc_put(key, len(rows))
 
 
-def search_players(ctx: Ctx, query: str, season_id: int | None = None, limit: int = 24) -> list[dict]:
-    """이름 검색 + 시즌(클래스) 거르기 — 분석해 둔 카드와 전체 88,359장에서 찾아 OVR 높은 순으로.
+def search_players(ctx: Ctx, query: str, seasons: tuple[int, ...] | None = None, limit: int = 24) -> list[dict]:
+    """이름 검색 + 시즌(클래스, 갈래를 합친 시즌이면 여럿) 거르기 — 분석해 둔 카드와 전체 88,359장에서 찾아 OVR 높은 순으로.
 
     OVR 을 모르는 카드는 최신 시즌 순으로 뒤에 둔다. 이름으로 찾았는데 모르는 카드가 있으면 데이터센터 선수 검색 한 번으로
     그 이름의 카드 OVR 을 받아 DB 에 둔다 — 다음부터는 바로 정렬된다. 이름 없이 시즌만 고르면 그 시즌 카드를 둘러본다.
     """
     q = _norm(query)
-    if not q and season_id is None:
+    if not q and not seasons:
         return []
 
     def keep(spid: int) -> bool:
-        return season_id is None or split_spid(spid)[0] == season_id
+        return not seasons or split_spid(spid)[0] in seasons
 
     analyzed = {p["player_id"]: p for p in ctx.players if (not q or q in _norm(p["name"])) and keep(p["spid"])}
     if q:
         hits = [h["spid"] for h in ctx.catalog.search(query, limit=2000)]
     else:
-        hits = [c["id"] for c in ctx.catalog.cards if split_spid(c["id"])[0] == season_id]
+        hits = [c["id"] for c in ctx.catalog.cards if keep(c["id"])]
     spids = list(dict.fromkeys([p["spid"] for p in analyzed.values()] + [s for s in hits if keep(s)]))[:SEARCH_CAP]
     ovrs = card_ovrs(ctx, spids)
     if q and len(q) >= 2 and any(s not in ovrs for s in spids[:200]):

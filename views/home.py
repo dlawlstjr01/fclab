@@ -9,7 +9,7 @@ from html import escape
 from data_prep.players import player_label, stat_values
 from services.explore import describe, explore_players, suggest_conditions
 from views.common import Ctx, back_button, friendly_error, log, search_players, tile_grid
-from views.widgets import season_select, semantic_players
+from views.widgets import season_family, season_select, semantic_players
 
 
 def _run_ai_search(ctx: Ctx, condition: str) -> None:
@@ -104,7 +104,9 @@ def render(ctx: Ctx) -> None:
     ctx.prefetcher.schedule([p["spid"] for p in results if p.get("lite")])
     if query.strip() or season:
         title = f"'{query.strip()}'" if query.strip() else ""
-        where = ctx.catalog.seasons[season]["className"] if season else "전체 시즌"
+        # 갈래를 합친 시즌(25IM - S&P · 25IM - FB)은 묶음 이름 하나로
+        where = (" · ".join(dict.fromkeys(season_family(ctx.catalog.seasons[s]["className"])[0] for s in season))
+                 if season else "전체 시즌")
         st.markdown(f'<div class="fc-section">🔍 {title} 이름 검색 결과<small>{where} · {len(results)}장'
                     f'{" (더 있으면 이름을 더 정확히)" if len(results) >= 24 else ""}</small></div>', unsafe_allow_html=True)
         if results:

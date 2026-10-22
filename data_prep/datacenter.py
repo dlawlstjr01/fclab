@@ -386,9 +386,11 @@ class DatacenterClient:
     def player_list(self, name: str = "", *, seasons: list[int] | None = None, positions: list[str] | None = None,
                     team_id: int | None = None, nation_id: int | None = None, teamcolor_id: int | None = None,
                     order: str = "ovr", ovr_min: int | None = None, ovr_max: int | None = None,
-                    price_max: int | None = None, skills: tuple[str, ...] = ()) -> list[dict]:
+                    price_max: int | None = None, skills: tuple[str, ...] = (),
+                    height: tuple[int, int] | None = None, weight: tuple[int, int] | None = None) -> list[dict]:
         """선수 검색 (한 번에 최대 200장). 이름만 주면 그 이름이 들어간 선수의 카드 전부. teamcolor_id 면 그 팀컬러가
-        적용되는 카드만. skills 는 같이 받을 능력치 칸(STAT_CODES 중 최대 4개). price_max 는 +1 강화 가격 상한(BP)."""
+        적용되는 카드만. skills 는 같이 받을 능력치 칸(STAT_CODES 중 최대 4개). price_max 는 +1 강화 가격 상한(BP).
+        height · weight = (최소, 최대) cm · kg — 같은 OVR 이 200장을 넘을 때 더 잘게 나눠 묻는 데 쓴다."""
         form = dict.fromkeys(LIST_FIELDS, "")
         form.update({"strPlayerName": name, "n4PageNo": "1", "strOrderby": ORDER_BY.get(order, "")})
         form.update({f"strSkill{i}": code for i, code in enumerate(skills[:4], start=1)})
@@ -408,6 +410,9 @@ class DatacenterClient:
             form["n4OvrMin"] = str(ovr_min)
         if price_max:
             form["n8PlayerGrade1Max"] = str(price_max // 1000)   # 화면의 가격 범위는 1,000 BP 단위
+        for field, bounds in (("Height", height), ("Weight", weight)):
+            if bounds:
+                form[f"n4{field}Min"], form[f"n4{field}Max"] = str(bounds[0]), str(bounds[1])
         return parse_player_list(self._post(LIST_PATH, form), skills[:4])
 
     def price(self, spid: int, grade: int) -> dict | None:
