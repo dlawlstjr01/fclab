@@ -9,7 +9,7 @@ import streamlit as st
 
 from data_prep.nexon_api import split_spid
 from data_prep.players import season_short
-from views.common import Ctx, card_ovrs, get_player
+from views.common import Ctx, by_ovr, card_ovrs, get_player
 
 # ── 강화 등급 고르기 ─────────────────────────────────────────────
 
@@ -173,7 +173,7 @@ def card_picker(ctx: Ctx, key: str, default_id: str | None = None, label: str = 
         return None
 
     name = ctx.catalog.by_spid[ctx.catalog.cards_of(pid)[0]]["name"]
-    cards = ctx.catalog.cards_of(pid)   # 이 선수의 시즌만 (최신 시즌부터)
+    cards = by_ovr(ctx, ctx.catalog.cards_of(pid))   # 이 선수의 시즌만 — OVR 높은 순
     if st.session_state.get(card_key) not in cards:
         st.session_state[card_key] = cards[0]
     chosen = st.session_state[card_key]

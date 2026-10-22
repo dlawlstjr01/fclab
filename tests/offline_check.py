@@ -449,6 +449,20 @@ from views.tactics import applied_html, list_order, teamcolor_note  # noqa: E402
 
 check(list_order(FORMATIONS["4-2-3-1"], "4-2-3-1") == ["ST", "LAM", "CAM", "RAM", "LDM", "RDM", "LB", "LCB", "RCB", "RB", "GK"],
       "자리별 선수 목록은 FC 온라인처럼 공격수부터 (같은 줄은 왼쪽부터, 골키퍼가 맨 아래)")
+from views.common import by_ovr  # noqa: E402
+
+fake_ctx = SimpleNamespace(cards=SimpleNamespace(get=lambda spids: {1: {"ovr": 100}}),
+                           db=SimpleNamespace(card_stats=lambda spids: {s: {"ovr": 120} for s in spids if s == 3}))
+check(by_ovr(fake_ctx, [4, 1, 2, 3]) == [3, 1, 4, 2],
+      "같은 선수의 시즌은 OVR 높은 순 (모르는 카드는 뒤에, 그 안에서는 최신 시즌부터) — 선수 고르기 · 이미지 고르기 · 다른 시즌")
+row_scale = ui_parts.ability_compare(
+    {"shown": {"ovr": 124, "summary": {"스피드": 118}, "stats": {"속력": 118, "가속력": 120}}, "base": {}, "mark": "", "note": "",
+     "name": "A", "position": "CF"},
+    {"shown": {"ovr": 126, "summary": {"스피드": 129}, "stats": {"속력": 129, "가속력": 125}}, "base": {}, "mark": "", "note": "",
+     "name": "B", "position": "RW"})
+widths = [int(w) for w in __import__("re").findall(r'width:(\d+)%', row_scale)]
+check(len(set(widths)) >= 5 and widths[-1] < widths[-3],
+      f"비교 막대: 묶음마다 같은 눈금으로 값마다 길이가 다르다 — 이긴 쪽끼리도 (가속력 125 < 속력 129) {widths}")
 row = ui_parts.card_row({"name": "가", "player_id": "1"}, {"summary": {"스피드": 100, "패스": 90}}, grade=1,
                         tc_summary={"패스": 5})
 check('<span>패스 <b class="up" title="팀컬러 +5">95</b>' in row and "<span>스피드 <b>100</b>" in row,

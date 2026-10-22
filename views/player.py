@@ -20,7 +20,7 @@ from services.cardinfo import bonus_stats
 from services.insights import percentiles, position_usage, trade_prices
 from services.teamcolor import effect_bonus, enhance_details
 from data_prep.tactics import OVR_GRID
-from views.common import (Ctx, add_to_compare, back_button, card_basics, dialog_open, enrich, friendly_error, get_player,
+from views.common import (Ctx, add_to_compare, back_button, by_ovr, card_basics, dialog_open, enrich, friendly_error, get_player,
                           log, render_sources, run_with_status, tile_grid, with_saves)
 from views.prices import compare_prices, price_section
 from views.widgets import card_picker, grade_buttons
@@ -338,7 +338,7 @@ def render(ctx: Ctx) -> None:
         st.warning("카드를 찾지 못했습니다. 홈에서 다시 검색해 주세요.")
         return
 
-    others = [s for s in ctx.catalog.cards_of(player["pid"]) if str(s) != player["player_id"]]
+    others = [s for s in by_ovr(ctx, ctx.catalog.cards_of(player["pid"])) if str(s) != player["player_id"]]   # OVR 높은 순
 
     # ── 헤더: ← 뒤로 · 카드 + 정보 ────────────────────────────────
     back_col, _ = st.columns([1, 9])
@@ -427,7 +427,7 @@ def render(ctx: Ctx) -> None:
     if others:
         pages = -(-len(others) // OTHER_PAGE)
         page = min(st.session_state.setdefault("other_page", {}).get(player["player_id"], 0), pages - 1)
-        st.markdown(f'<div class="fc-section">🗂️ {escape(player["name"])}의 다른 시즌 카드<small>{len(others)}장 · 최신 시즌부터'
+        st.markdown(f'<div class="fc-section">🗂️ {escape(player["name"])}의 다른 시즌 카드<small>{len(others)}장 · OVR 높은 순'
                     f'{f" · {page + 1}/{pages}" if pages > 1 else ""}</small></div>', unsafe_allow_html=True)
         shown = [get_player(ctx, str(s)) for s in others[page * OTHER_PAGE : (page + 1) * OTHER_PAGE]]
         ctx.prefetcher.schedule([p["spid"] for p in shown if p.get("lite")])   # 누르기 전에 미리 분석

@@ -492,6 +492,12 @@ def card_ovrs(ctx: Ctx, spids: list[int]) -> dict[int, int]:
     return out
 
 
+def by_ovr(ctx: Ctx, spids: list[int]) -> list[int]:
+    """같은 선수의 카드(시즌)를 늘어놓을 때는 항상 OVR 높은 순 — OVR 을 모르는 카드는 뒤에 (그 안에서는 받은 순서 = 최신 시즌부터)."""
+    ovrs = card_ovrs(ctx, spids)
+    return sorted(spids, key=lambda s: (s not in ovrs, -ovrs.get(s, 0)))
+
+
 def _learn_ovrs(ctx: Ctx, query: str) -> None:
     """이름으로 데이터센터 선수 검색 한 번 — 그 이름이 들어간 선수 카드 전부의 OVR · 급여 · 주발 · 시세를 DB 에 (하루에 한 번)."""
     key = f"name_search:{_norm(query)}"

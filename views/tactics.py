@@ -33,7 +33,8 @@ from services.cardinfo import bonus_stats
 from services.insights import latest_squad
 from services.squad import MODE_NAMES, PAY_CAP, SquadAdvisor, explain
 from services.teamcolor import GROUPS, effect_bonus, enhance_details, squad_teamcolors
-from views.common import Ctx, crests_of, dialog_open, enrich_many, friendly_error, get_player, go, log, render_sources
+from views.common import (Ctx, by_ovr, crests_of, dialog_open, enrich_many, friendly_error, get_player, go, log,
+                          render_sources)
 from views.pitch import dropped, pitch, pitch_slots, slot_ovrs
 from views.widgets import card_picker, card_tiles, grade_buttons
 
@@ -715,7 +716,7 @@ def _image_picker(ctx: Ctx, code: str, player: dict, entry: dict) -> None:
     if is_live_season(player.get("season")):
         st.caption("LIVE 시즌 카드는 선수 이미지를 바꿀 수 없습니다.")
         return
-    others = [s for s in ctx.catalog.cards_of(own % 1_000_000)
+    others = [s for s in by_ovr(ctx, ctx.catalog.cards_of(own % 1_000_000))   # OVR 높은 순
               if s != own and ui_parts.image(ACTION_IMAGE.format(spid=s))]
     if not others:
         st.caption("이 선수는 다른 시즌 카드(액션샷)가 없어 바꿀 이미지가 없습니다.")

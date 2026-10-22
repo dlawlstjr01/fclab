@@ -828,20 +828,30 @@ def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0
     return f'<div class="fc-abil">{"".join(parts)}</div>'
 
 
-CMP_STEP = 6   # 비교 막대 — 한 점 차이마다 낮은 쪽 막대를 이만큼(%) 짧게 (120 대 125 면 100% 대 70%)
+CMP_MARGIN = 4   # 비교 막대의 눈금 — 그 묶음에 나온 가장 낮은 값보다 이만큼 아래를 0 으로 (0 부터 재면 120 · 130 대가 같은 길이로 보인다)
 
 
-def _cmp_cell(value: int | None, other: int | None, base: int | None, side: str, mark: str = "", pos: str = "") -> str:
+def _cmp_scale(values: list[int | None]) -> tuple[float, float]:
+    """막대 눈금 (낮은 끝, 높은 끝) — 묶음(대표 OVR · 스피드 · 슛 …)마다 두 카드의 값으로. 표 전체를 한 눈금으로 재면 수비 ·
+    골키퍼 같은 낮은 값 때문에 120 · 130 대 차이가 거의 안 보였다. 막대는 값마다 길이가 다르다 — 이긴 쪽끼리도."""
+    values = [x for x in values if x]
+    if not values:
+        return 0.0, 1.0
+    return min(values) - CMP_MARGIN, max(max(values), min(values) + 1)
+
+
+def _cmp_cell(value: int | None, other: int | None, base: int | None, side: str, mark: str = "", pos: str = "",
+              scale: tuple[float, float] = (0.0, 150.0)) -> str:
     """비교 표 한쪽 칸 — 값(높으면 그쪽 색) · 초록 +N(강화 위에 적응도 · 팀컬러로 오른 만큼) · 막대(가운데에서 바깥으로).
-    막대는 두 값의 차이로 — 높은 쪽(같으면 둘 다)이 가득, 낮은 쪽은 한 점마다 CMP_STEP% 짧게. 120 · 130 대 값을 0 부터 재면
-    길이가 거의 같아 보여서."""
+    막대 길이는 표 전체에 같은 눈금(scale)으로 값마다 — 이긴 쪽 막대도 숫자가 크면 더 길다."""
     if value is None:
         return f'<div class="{side}"></div>'
     win = " win" if other is not None and value > other else ""
     up = f'<small class="up">+{value - base}</small>' if base is not None and value > base else ""
     gap = f'<small class="gap">+{value - other}</small>' if win else ""
-    width = 100 if other is None or value >= other else max(8, 100 - (other - value) * CMP_STEP)
-    bar = f'<i style="width:{width}%"></i>'
+    low, high = scale
+    width = max(3.0, min(100.0, (value - low) / (high - low) * 100))
+    bar = f'<i style="width:{width:.0f}%"></i>'
     shown = f"<b>{value}{mark}</b>" + (f"<small class=\"pos\">{escape(pos)}</small>" if pos else "")
     inner = f"{gap}{shown}{up}" if side == "a" else f"{shown}{up}{gap}"
     bar_html, value_html = f'<span class="bar">{bar}</span>', f'<span class="v">{inner}</span>'
@@ -853,19 +863,23 @@ def ability_compare(a: dict, b: dict) -> str:
     """두 카드의 능력치를 나란히 — a · b = views.player.boosted 결과 + name · position(카드의 대표 포지션). 위에 대표 OVR
     (각자 카드에 나와 있는 포지션), 아래에 요약 6개와 세부 능력치 34개를 묶음별로. 더 높은 쪽 숫자에 그쪽 색과 차이,
     초록 +N 은 각자 강화 위에 적응도 · 팀컬러로 오른 만큼."""
-    def row(label: str, va, vb, ba=None, bb=None, cls: str = "", ma: str = "", mb: str = "", pa: str = "", pb: str = "") -> str:
-        return (f'<div class="r {cls}">{_cmp_cell(va, vb, ba, "a", ma, pa)}<div class="k">{label}</div>'
-                f'{_cmp_cell(vb, va, bb, "b", mb, pb)}</div>')
+    def row(label: str, va, vb, ba=None, bb=None, cls: str = "", ma: str = "", mb: str = "", pa: str = "", pb: str = "",
+            scale: tuple[float, float] = (0.0, 150.0)) -> str:
+        return (f'<div class="r {cls}">{_cmp_cell(va, vb, ba, "a", ma, pa, scale)}<div class="k">{label}</div>'
+                f'{_cmp_cell(vb, va, bb, "b", mb, pb, scale)}</div>')
 
     sa, sb = a["shown"], b["shown"]
     rows = [row("대표 OVR", sa.get("ovr"), sb.get("ovr"), a["base"].get("ovr"), b["base"].get("ovr"), "big", a["mark"], b["mark"],
-                a.get("position", ""), b.get("position", ""))]
+                a.get("position", ""), b.get("position", ""), scale=_cmp_scale([sa.get("ovr"), sb.get("ovr")]))]
     for group, names in ABILITY_GROUPS.items():
-        rows.append(row(f"<b>{group}</b>", (sa.get("summary") or {}).get(group), (sb.get("summary") or {}).get(group),
-                        (a["base"].get("summary") or {}).get(group), (b["base"].get("summary") or {}).get(group), "grp"))
+        summary_a, summary_b = (sa.get("summary") or {}).get(group), (sb.get("summary") or {}).get(group)
+        stats_a, stats_b = sa.get("stats") or {}, sb.get("stats") or {}
+        scale = _cmp_scale([summary_a, summary_b] + [stats_a.get(n) for n in names] + [stats_b.get(n) for n in names])
+        rows.append(row(f"<b>{group}</b>", summary_a, summary_b, (a["base"].get("summary") or {}).get(group),
+                        (b["base"].get("summary") or {}).get(group), "grp", scale=scale))
         for name in names:
-            rows.append(row(escape(name), (sa.get("stats") or {}).get(name), (sb.get("stats") or {}).get(name),
-                            (a["base"].get("stats") or {}).get(name), (b["base"].get("stats") or {}).get(name)))
+            rows.append(row(escape(name), stats_a.get(name), stats_b.get(name), (a["base"].get("stats") or {}).get(name),
+                            (b["base"].get("stats") or {}).get(name), scale=scale))
     wins_a = sum(1 for n in (sa.get("stats") or {}) if (sa["stats"].get(n) or 0) > ((sb.get("stats") or {}).get(n) or 0))
     wins_b = sum(1 for n in (sb.get("stats") or {}) if (sb["stats"].get(n) or 0) > ((sa.get("stats") or {}).get(n) or 0))
     head = (f'<div class="hd"><div class="a">{escape(a["name"])}<small>{escape(a["note"])} · 세부 {wins_a}개 우세</small></div>'
