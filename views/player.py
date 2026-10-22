@@ -27,6 +27,7 @@ from views.widgets import card_picker, grade_buttons
 
 SAMPLES = ["프로 데뷔는 언제, 어느 팀에서 했어?", "국가대표 경력을 알려 줘", "가장 큰 우승 경력은?", "어떤 플레이 스타일이야?"]
 OTHER_PAGE = 12   # 다른 시즌 카드 한 번에 (2줄 × 6장)
+ADAPT_LEVELS = [1, 5]   # 적응도 — 지금 게임에는 1 · 5 두 단계뿐 (2 · 3 · 4 는 없어졌다). 5 = 모든 능력치 +4
 
 
 def _ask(question: str) -> None:
@@ -81,8 +82,11 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
     ctx.teamcolors.want([t["id"] for t in own + features])   # 단계별 효과를 미리 — 고르자마자 바로 계산되게
     grade = grade_buttons("강화", f"pc_grade_{spid}")
     a_col, e_col, t_col, l_col, r_col, x_col = st.columns([0.8, 2.1, 2.1, 0.9, 2.1, 1], vertical_alignment="bottom")
-    adapt = a_col.selectbox("적응도", list(range(1, 6)), key=f"pc_adapt_{spid}", format_func=lambda a: f"+{a}",
-                            help="같은 팀에서 뛴 만큼 오르는 적응도 — 1단계는 +0, 단계마다 모든 능력치 +1 (5단계 = +4)")
+    adapt_key = f"pc_adapt_{spid}"
+    if st.session_state.get(adapt_key) not in (None, *ADAPT_LEVELS):   # 예전에 고른 2 · 3 · 4 (지금은 없는 단계)
+        st.session_state[adapt_key] = ADAPT_LEVELS[-1] if st.session_state[adapt_key] > 1 else ADAPT_LEVELS[0]
+    adapt = a_col.selectbox("적응도", ADAPT_LEVELS, key=adapt_key, format_func=lambda a: f"+{a}",
+                            help="적응도는 1 · 5 두 단계 — 5 는 모든 능력치 +4 (초록 +4 로 보인다)")
     enhance_options = [(0, 0)] + [(i, lv["level"]) for i in enhance_ids
                                   for lv in (details.get(i) or {}).get("levels", [])
                                   if (details.get(i) or {}).get("min_grade") and details[i]["min_grade"] <= grade]
@@ -121,7 +125,7 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
     if conditions:   # 지금 등급으로 고를 수 있는 강화 팀컬러는 굵게 — 백금빛 물결이 왜 안 보이는지(11강 미만) 바로 알 수 있게
         st.caption("강화 팀컬러 조건: " + " · ".join(f"**{n} {g}강+**" if g <= grade else f"{n} {g}강+" for g, n in conditions)
                    + f" — 지금 +{grade}강은 굵은 것만 고를 수 있습니다. 데이터센터에서 보이는 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · "
-                   "백금빛 Lv.2 +9 는 팀컬러(+3 · +4 · +5)에 적응도 5(+4)를 더한 값입니다 — 적응도 +5 를 함께 고르면 같아집니다.")
+                   "백금빛 Lv.2 +9 는 팀컬러(+3 · +4 · +5)에 적응도 5(+4)를 더한 값입니다 — 적응도 +5 를 함께 고르면 초록 +N 이 같아집니다.")
     effects = ([level_effects(*enhance)] if enhance[0] else []) + ([level_effects(pick["id"], level)] if pick else []) \
         + ([level_effects(relation["id"], None)] if relation else [])
     extras = ([f"적응도 +{adapt}"] if adapt > 1 else []) + ([enhance_label(enhance).split(" (")[0]] if enhance[0] else []) \
@@ -154,11 +158,11 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         boosted = ctx.cards.exact(spid, pick["combo"])
         if boosted:
             shown, exact = {**boosted, "exact": True}, True
-    # 적응도는 숫자에 바로 들어간다 — 초록 +N 의 기준은 강화 · 적응도까지, +N 은 그 위에 팀컬러(강화 · 소속(특정 능력치만
-    # 오르는 것도 그 능력치에) · 특성)로 더 오른 만큼. 데이터센터는 강화를 바꾸면 적응도 5 와 그 등급의 가장 높은 강화 팀컬러를
-    # 함께 골라(n1Change=1) 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · 백금빛 Lv.2 +9 로 보이는데, 이것은 팀컬러 +3/+4/+5 에 적응도 +4 를
-    # 더한 값이다 (2026-10-22 데이터센터 계산으로 확인).
-    base = bonus_stats(info, grade, adapt, [])
+    # 초록 +N 의 기준은 강화까지 — 강화만 바꾸면 +N 이 붙지 않고(강화분은 숫자에), +N 은 그 위에 적응도(5 = +4) · 팀컬러(강화 ·
+    # 소속(특정 능력치만 오르는 것도 그 능력치에) · 특성)로 더 오른 만큼. 데이터센터는 강화를 바꾸면 적응도 5 와 그 등급의 가장 높은
+    # 강화 팀컬러를 함께 골라(n1Change=1) 은빛 Lv.2 +7 · 금빛 Lv.2 +8 · 백금빛 Lv.2 +9 로 보이는데, 이것은 팀컬러 +3/+4/+5 에
+    # 적응도 +4 를 더한 값이다 (2026-10-22 데이터센터 계산으로 확인) — 여기서는 적응도 +5 와 그 팀컬러를 고르면 같은 +N.
+    base = bonus_stats(info, grade, 1, [])
     focus: dict[str, int] = {}   # 팀컬러가 '전체 능력치' 말고 따로 올려 주는 능력치 (예: 바르셀로나 Lv.4 짧은 패스 +3 · 볼 컨트롤 +3)
     for effect in pick["effects"]:
         for name, value in effect_bonus(effect or [])[1].items():
@@ -213,8 +217,8 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         f'<div class="fc-panel"><div class="title">클럽 경력</div>{ui_parts.club_history(info.get("clubs") or [])}</div>'
         "</div>", unsafe_allow_html=True)
     right.markdown(
-        f'<div class="fc-stack"><div class="fc-panel"><div class="title">능력치<small>{escape(note)} · 적응도는 숫자에 바로 · '
-        f'초록 +N 은 팀컬러(강화 · 소속 · 특성)로 더 오른 만큼'
+        f'<div class="fc-stack"><div class="fc-panel"><div class="title">능력치<small>{escape(note)} · 강화분은 숫자에 · '
+        f'초록 +N 은 적응도 · 팀컬러(강화 · 소속 · 특성)로 더 오른 만큼'
         f'{" · 초록 줄은 팀컬러가 따로 올려 주는 능력치" if focus else ""}</small></div>'
         f'{ui_parts.ability_table(shown.get("stats") or {}, shown.get("summary") or {}, 0, base["stats"], focus)}'
         "</div></div>", unsafe_allow_html=True)

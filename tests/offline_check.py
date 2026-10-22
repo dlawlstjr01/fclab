@@ -831,24 +831,27 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
 
     check(grid_html() != "", "선수 상세: 카드 정보 — 포지션별 오버롤 (받아 둔 상세)")
     at.button(key=f"pc_grade_{spid_t}__8").click().run()
+    check(f"<b>{90 + GRADE_OVR[8]}</b>" in grid_html() and 'class="up"' not in grid_html()
+          and at.selectbox(key=f"pc_adapt_{spid_t}").options == ["+1", "+5"],
+          f"선수 상세: 강화만 8강으로 → 포지션 OVR 90+{GRADE_OVR[8]}, 초록 +N 없음 (강화분은 숫자에) · 적응도는 1 · 5 두 단계만")
     at.selectbox(key=f"pc_adapt_{spid_t}").select(5).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up"' not in grid_html(),
-          f"선수 상세: 8강 + 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 적응도는 숫자에 바로 (초록 +N 없음)")
+    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html(),
+          f"선수 상세: 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 초록 +4 (적응도로 오른 만큼)")
     enh = at.selectbox(key=f"pc_enh_{spid_t}_8")
     enh.select_index(next(i for i, label in enumerate(enh.options) if "금빛 물결 Lv.2" in label)).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4 + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
+    check(f"<b>{90 + GRADE_OVR[8] + 4 + 4}</b>" in grid_html() and 'class="up">+8<' in grid_html()
           and any("금빛 Lv.2 +8" in c.value for c in at.caption),
-          f"선수 상세: 거기에 금빛 물결 Lv.2 → OVR {90 + GRADE_OVR[8] + 8} (데이터센터 기본값 +8 과 같다), 초록 +4 = 강화 팀컬러만")
+          f"선수 상세: 거기에 금빛 물결 Lv.2 → OVR {90 + GRADE_OVR[8] + 8}, 초록 +8 = 적응도 4 + 금빛 4 (데이터센터 기본값 +8 과 같다)")
 
     def ability_html() -> str:
         return next((m.value for m in at.markdown if 'class="fc-abil"' in m.value), "")
 
     at.selectbox(key=f"pc_tc_{spid_t}").select_index(1).run()
     short = 80 + GRADE_OVR[8] + 4 + 4 + 3
-    check(f">{short}</b><small class=\"up\">+{short - 80 - GRADE_OVR[8] - 4}<" in ability_html()
+    check(f">{short}</b><small class=\"up\">+{short - 80 - GRADE_OVR[8]}<" in ability_html()
           and f"<b>{90 + GRADE_OVR[8] + 8}" in grid_html() and 'class="it focus" title="팀컬러가 따로 올려 주는 능력치 +3"' in ability_html(),
-          f"선수 상세: 소속 팀컬러 '짧은 패스 +3' → 짧은 패스 {short}, 초록 +{short - 80 - GRADE_OVR[8] - 4} = 금빛 4 + 소속 3 "
-          "(특정 능력치만 오르는 효과도 그 능력치의 +N 에, 적응도는 숫자에)")
+          f"선수 상세: 소속 팀컬러 '짧은 패스 +3' → 짧은 패스 {short}, 초록 +{short - 80 - GRADE_OVR[8]} = 적응도 4 + 금빛 4 + 소속 3 "
+          "(특정 능력치만 오르는 효과도 그 능력치의 +N 에)")
     check(any('★★★★<span class="star-up"' in m.value and ">★★</span>" in m.value for m in at.markdown),
           "선수 상세: 개인기 4성 카드를 8강으로 → 5 · 8강 별 2개를 초록으로 더해 6성")
     check(any('class="fc-qa-head"' in m.value for m in at.markdown), "선수 상세: Q&A · AI 리포트 · 근거 문서를 눈에 띄는 상자로 (제목 · 근거 기반 표시)")
