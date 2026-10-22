@@ -25,7 +25,7 @@ from data_prep.datacenter import NEW_TRAIT_ICONS, TRAIT_ICON
 from data_prep.enhance import GRADE_OVR
 from data_prep.market import bp
 from data_prep.nexon_api import ACTION_IMAGE
-from data_prep.players import GROUP_OF, stat_values
+from data_prep.players import GROUP_OF, is_live_season, stat_values
 from data_prep.tactics import (BASE_POSITION, FORMATION_GROUPS, FORMATIONS, LINE, PLAY_STYLES, TEAM_TACTICS, formation_of,
                                position_at, slot_xy)
 from services.ai import recommend_tactics
@@ -202,10 +202,9 @@ def _reset_all() -> None:
 
 
 def _ensure_state(ctx: Ctx) -> None:
-    if "tac_squad" not in st.session_state:   # 들어오자마자 경기장이 차 있도록
+    if "tac_squad" not in st.session_state:   # 처음에는 빈 스쿼드 — 채우기는 '⚡ 파워 랭킹 추천' · '🎮 내 스쿼드' · '✏️ 편집'으로
         st.session_state.tac_formation = "4-2-3-1"
         st.session_state.tac_squad = {code: None for code in FORMATIONS["4-2-3-1"]}
-        _fill_power(ctx)
     st.session_state.setdefault("tac_formation_pick", st.session_state.tac_formation)
 
 
@@ -272,7 +271,9 @@ def squad_view(ctx: Ctx, codes: list[str], players: dict[str, dict | None], grad
         pay = row.get("pay") if row.get("pay") is not None else (info or {}).get("pay")   # 선수 검색 값이 더 자주 새로 온다
         ovr, exact = ovrs.get(code, (None, False))
         entry = _squad().get(code) or {}
-        shown = {**p, "image": ACTION_IMAGE.format(spid=entry["img"])} if entry.get("img") else p
+        # 선수 이미지 바꾸기는 LIVE 시즌 카드를 뺀 나머지 시즌만 (예전에 골라 둔 값이 있어도 LIVE 면 기본 이미지)
+        swap = entry.get("img") and not is_live_season(p.get("season"))
+        shown = {**p, "image": ACTION_IMAGE.format(spid=entry["img"])} if swap else p
         trait = entry.get("trait")
         slots[code] = {"player": shown, "info": info, "grade": grades.get(code) or 1, "ovr": ovr, "exact": exact, "pay": pay,
                        "pay_change": row.get("pay_change"), "foot": (info or {}).get("foot_lr") or row.get("foot"),
@@ -626,10 +627,12 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
 # ── 화면 ────────────────────────────────────────────────────────
 
 def _slot_editor(ctx: Ctx, code: str, slot: dict) -> None:
-    """자리 선수 꾸미기 — 강화 등급 · 보유 신규 특성 · 선수 이미지(같은 선수의 다른 시즌 카드 액션샷)."""
+    """자리 선수 꾸미기 — 강화 등급 · 보유 신규 특성 · 선수 이미지(같은 선수의 다른 시즌 카드 액션샷, LIVE 시즌 카드는 못 바꾼다)."""
     entry = _squad()[code]
     player = slot["player"]
-    fields = {"grade": slot["grade"], "trait": entry.get("trait") or NO_TRAIT, "img": entry.get("img") or OWN_IMAGE}
+    live = is_live_season(player.get("season"))
+    fields = {"grade": slot["grade"], "trait": entry.get("trait") or NO_TRAIT,
+              "img": OWN_IMAGE if live else (entry.get("img") or OWN_IMAGE)}
     for field, value in fields.items():   # 다른 곳(AI 추천 · 불러오기)에서 바뀐 값에 맞춘다
         key = f"tac_{field}_{code}"
         if st.session_state.get(key) != value:
@@ -640,9 +643,10 @@ def _slot_editor(ctx: Ctx, code: str, slot: dict) -> None:
     t_col.selectbox("보유 신규 특성", [NO_TRAIT] + list(NEW_TRAIT_ICONS), key=f"tac_trait_{code}", on_change=_set_field,
                     args=(code, "trait", f"tac_trait_{code}"), help="카드에 얹은 신규 특성 (경기장 카드 오른쪽 위에 보입니다)")
     cards = ctx.catalog.cards_of(int(player["player_id"]) % 1_000_000)
-    i_col.selectbox("선수 이미지 (다른 시즌 카드 액션샷)", [OWN_IMAGE] + cards, key=f"tac_img_{code}",
+    i_col.selectbox("선수 이미지 (다른 시즌 카드 액션샷)", [OWN_IMAGE] + ([] if live else cards), key=f"tac_img_{code}",
                     format_func=lambda s: "기본 (이 카드)" if s == OWN_IMAGE else ctx.catalog.season_name(s),
-                    on_change=_set_field, args=(code, "img", f"tac_img_{code}"))
+                    on_change=_set_field, args=(code, "img", f"tac_img_{code}"), disabled=live,
+                    help="LIVE 시즌 카드는 선수 이미지를 바꿀 수 없습니다" if live else None)
     st.button("↺ 이 선수 초기화", key=f"tac_reset_{code}", on_click=_reset_slot, args=(code,),
               help="+1강 · 신규 특성 없음 · 기본 이미지로 (선수는 그대로)")
 

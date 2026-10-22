@@ -426,6 +426,12 @@ from services.stats import PAGE, PASSES, StatsCrawler  # noqa: E402
 check([skill_stars(3, g) for g in (4, 5, 8, 11, 13)] == [(3, 0), (3, 1), (3, 2), (3, 3), (3, 3)]
       and skill_stars(5, 13) == (5, 1) and skill_stars(6, 11) == (6, 0),
       "개인기 별: 5 · 8 · 11강에서 하나씩 더하고 최대 6개 (3성 → 13강 6성, 5성 → 6성까지만)")
+from data_prep.players import is_live_season  # noqa: E402
+
+check([is_live_season(n) for n in ("25 LIVE (25 LIVE)", "17 LIVE (17 LIVE)", "25 PL (25 Premium Live)",
+                                    "26 TOTS (26 Team Of The Season)", "ICON (ICON)", None)]
+      == [True, True, False, False, False, False],
+      "LIVE 시즌 판별 — '25 LIVE' 는 LIVE, Premium Live(PL) · TOTS · ICON 은 아님 (스쿼드 이미지 바꾸기는 LIVE 만 막는다)")
 from services.teamcolor import squad_teamcolors  # noqa: E402
 
 grid = {pos: 100 for pos in OVR_GRID} | {"CAM": 120, "CM": 117}
@@ -569,6 +575,8 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     seed.put_teamcolor_detail(10001, {"name": "금빛 물결", "description": "8강 이상의 선수들로 구성된 팀컬러입니다.",
                                       "levels": [{"level": 1, "count": 5, "effects": ["전체 능력치 +3"]},
                                                  {"level": 2, "count": 8, "effects": ["전체 능력치 +4"]}], "min_grade": 8})
+    seed.put_teamcolors([{"id": 1001, "name": "점검 클럽", "kind": "클럽", "max_level": 1, "max_count": 3,   # 특정 능력치만 오르는 소속 팀컬러
+                          "effects": ["짧은 패스 +3"], "icon": ""}])
     st.cache_resource.clear()
     at = app().run()
     check(not at.exception and any(k.startswith("top_") for k in keys(at)), "홈: 파워 랭킹 카드가 보인다")
@@ -654,6 +662,9 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     at.button(key=first).click().run()
     check(at.session_state["page"] == "player", "상세보기 → 선수 페이지")
     at.button(key="nav_tactics").click().run()
+    check(not at.exception and not any(at.session_state["tac_squad"].values())
+          and not any(s_["name"] for s_ in pitch_slots_of(at)),
+          "스쿼드 메이커: 처음 들어가면 빈 스쿼드 (11자리 모두 비어 있음)")
     at.button(key="tac_power").click().run()
     squad_state = at.session_state["tac_squad"]
     filled = [code for code, v in squad_state.items() if v]
@@ -668,8 +679,9 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     app_db = FcDb(tmp / "storage" / "fclab.db")
     app_db.put_card_info(spid_t, {"v": 2, "ovr": 110, "position": BASE_POSITION[code], "pay": 21,
                                   "position_ovr": {pos: 90 for pos in OVR_GRID} | {BASE_POSITION[code]: 108},
-                                  "teamcolors": {"소속": [], "관계": [], "강화": []}, "traits": [], "summary": {"스피드": 100},
-                                  "foot_lr": {"L": 3, "R": 5, "main": "R"}, "clubs": [], "stats": {}, "skill_moves": 4})
+                                  "teamcolors": {"소속": [{"id": 1001, "name": "점검 클럽"}], "관계": [], "강화": []}, "traits": [],
+                                  "summary": {"스피드": 100}, "foot_lr": {"L": 3, "R": 5, "main": "R"}, "clubs": [],
+                                  "stats": {"짧은 패스": 80}, "skill_moves": 4})
     squad_state[code]["grade"] = 5
     at.run()
     expect = 108 + GRADE_OVR[5]
@@ -712,13 +724,23 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     check(grid_html() != "", "선수 상세: 카드 정보 — 포지션별 오버롤 (받아 둔 상세)")
     at.button(key=f"pc_grade_{spid_t}__8").click().run()
     at.selectbox(key=f"pc_adapt_{spid_t}").select(5).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up"' not in grid_html(),
-          f"선수 상세: 8강 + 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4 를 숫자에 바로 (적응도는 초록 +N 으로 따로 보이지 않음)")
+    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
+          and f'class="up">+{GRADE_OVR[8] + 4}<' not in grid_html(),
+          f"선수 상세: 8강 + 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 초록 +4 는 적응도로 더 오른 만큼 (강화분은 숫자에)")
     enh = at.selectbox(key=f"pc_enh_{spid_t}_8")
     enh.select_index(next(i for i, label in enumerate(enh.options) if "금빛 물결 Lv.2" in label)).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4 + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
-          and f'class="up">+8<' not in grid_html(),
-          f"선수 상세: 거기에 금빛 물결 Lv.2 → OVR {90 + GRADE_OVR[8] + 8}, 초록 +4 는 강화 팀컬러로 오른 만큼만 (적응도 +4 는 빼고)")
+    check(f"<b>{90 + GRADE_OVR[8] + 4 + 4}</b>" in grid_html() and 'class="up">+8<' in grid_html(),
+          f"선수 상세: 거기에 금빛 물결 Lv.2 → OVR {90 + GRADE_OVR[8] + 8}, 초록 +8 = 적응도 4 + 강화 팀컬러 4")
+
+    def ability_html() -> str:
+        return next((m.value for m in at.markdown if 'class="fc-abil"' in m.value), "")
+
+    at.selectbox(key=f"pc_tc_{spid_t}").select_index(1).run()
+    short = 80 + GRADE_OVR[8] + 4 + 4 + 3
+    check(f">{short}</b><small class=\"up\">+{short - 80 - GRADE_OVR[8]}<" in ability_html()
+          and f"<b>{90 + GRADE_OVR[8] + 8}" in grid_html() and 'class="it focus" title="팀컬러가 따로 올려 주는 능력치 +3"' in ability_html(),
+          f"선수 상세: 소속 팀컬러 '짧은 패스 +3' → 짧은 패스 {short}, 초록 +{short - 80 - GRADE_OVR[8]} = 적응도 4 + 금빛 4 + 소속 3 "
+          "(특정 능력치만 오르는 효과도 그 능력치의 +N 에)")
     check(any('★★★★<span class="star-up"' in m.value and ">★★</span>" in m.value for m in at.markdown),
           "선수 상세: 개인기 4성 카드를 8강으로 → 5 · 8강 별 2개를 초록으로 더해 6성")
     check(any('class="fc-qa-head"' in m.value for m in at.markdown), "선수 상세: Q&A · AI 리포트 · 근거 문서를 눈에 띄는 상자로 (제목 · 근거 기반 표시)")

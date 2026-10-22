@@ -135,6 +135,12 @@ def season_short(class_name: str) -> str:
     return class_name.split(" (")[0].strip()
 
 
+def is_live_season(class_name: str | None) -> bool:
+    """LIVE 시즌 카드인가 — '25 LIVE (25 LIVE)' · '24 LIVE' … (번호 300 · 317~324). '25 PL (Premium Live)'은 다른 시즌이다."""
+    short = season_short(class_name or "").upper()
+    return short == "LIVE" or (short.endswith(" LIVE") and short.split()[0].isdigit())
+
+
 def stat_values(ranker: dict | None) -> dict[str, float]:
     """랭커 스탯 원본에서 화면용 값(성공률 포함)을 만든다. 기록이 없으면 빈 dict."""
     if not ranker:

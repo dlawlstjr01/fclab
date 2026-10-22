@@ -148,7 +148,9 @@ button[data-testid="stBaseButton-tertiary"]:hover {{ background: rgba(127,127,12
 /* 상단 메뉴 — 넓은 화면은 한 줄 고정, 900px 이하에서만 줄바꿈 (모바일에서도 세로로 길게 쌓이지 않게) */
 .st-key-navbar [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap; gap: .35rem; }}
 .st-key-navbar [data-testid="stColumn"] {{ min-width: 0; }}
-.st-key-navbar button p {{ white-space: nowrap; }}
+.st-key-navbar button {{ padding-left: .45rem; padding-right: .45rem; min-width: 0; max-width: 100%; overflow: hidden; }}
+.st-key-navbar button p {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+@media (max-width: 1180px) {{ .st-key-navbar button p {{ font-size: 13px; }} }}
 @media (max-width: 900px) {{
   .st-key-navbar [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .35rem; }}
   .st-key-navbar [data-testid="stColumn"] {{ width: auto !important; min-width: 92px; flex: 1 1 92px !important; }}
@@ -361,6 +363,9 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-abil .it b {{ font-variant-numeric: tabular-nums; }}
 .fc-abil .v1 {{ color: #8fb3ff; }} .fc-abil .v2 {{ color: #2fd389; }} .fc-abil .v3 {{ color: #f2c94c; }}
 .fc-abil .v4 {{ color: #ff6b6b; }}
+/* 팀컬러가 따로 올려 주는 능력치 (예: 바르셀로나 Lv.4 짧은 패스 · 볼 컨트롤) — 이름까지 초록, 옅은 초록 면 */
+.fc-abil .it.focus {{ color: {ACCENT}; font-weight: 800; background: rgba(22,224,138,.10); border-radius: 6px;
+  padding: 2px 6px; margin: 0 -6px; }}
 @media (max-width: 760px) {{ .fc-abil {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
 .fc-sum {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }}
 .fc-sum > div {{ flex: 1 1 120px; min-width: 0; border-radius: 12px; padding: 8px 12px; background: {t['track']}; }}
@@ -679,7 +684,7 @@ def _up(value: int, base: int | None) -> str:
 
 def ovr_grid(position_ovr: dict[str, int], order: tuple[str, ...], bonus: int = 0, base: dict[str, int] | None = None) -> str:
     """포지션별 OVR 16칸 (데이터센터 선수 정보 화면 순서) — bonus 를 더해 보이고, base 보다 오른 만큼을 작게 (선수 상세는
-    강화 · 적응도 · 소속/특성 팀컬러까지 넣은 값을 base 로 넘겨, 초록 +N 은 강화 팀컬러로 오른 만큼만).
+    강화까지 넣은 값을 base 로 넘겨, 초록 +N 은 적응도 · 팀컬러로 더 오른 만큼).
     가장 높은 포지션은 테두리."""
     if not position_ovr:
         return '<div class="fc-note">포지션별 OVR 을 아직 받지 못했습니다.</div>'
@@ -692,8 +697,10 @@ def ovr_grid(position_ovr: dict[str, int], order: tuple[str, ...], bonus: int = 
     return f'<div class="fc-ovrgrid">{cells}</div>'
 
 
-def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0, base: dict[str, int] | None = None) -> str:
-    """세부 능력치 34개를 묶음별로 (요약 값과 함께) — bonus 를 모든 능력치에 더하고, base 보다 오른 만큼을 작게 (ovr_grid 와 같다)."""
+def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0, base: dict[str, int] | None = None,
+                  focus: dict[str, int] | None = None) -> str:
+    """세부 능력치 34개를 묶음별로 (요약 값과 함께) — bonus 를 모든 능력치에 더하고, base 보다 오른 만큼을 작게 (ovr_grid 와 같다).
+    focus = {능력치: 더한 값} — 팀컬러가 따로 올려 주는 능력치를 강조한다 ('전체 능력치' 말고 그 팀컬러만의 것)."""
     parts = []
     for group, names in ABILITY_GROUPS.items():
         head = f" <b>{summary[group] + bonus}</b>" if group in summary else ""
@@ -701,7 +708,9 @@ def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0
         for name in names:
             if name in stats:
                 value = stats[name] + bonus
-                parts.append(f'<div class="it">{escape(name)}<span><b class="{_tier(value)}">{value}</b>'
+                extra = (focus or {}).get(name)
+                mark = f' focus" title="팀컬러가 따로 올려 주는 능력치 +{extra}' if extra else ""
+                parts.append(f'<div class="it{mark}">{escape(name)}<span><b class="{_tier(value)}">{value}</b>'
                              f'{_up(value, (base or {}).get(name))}</span></div>')
     return f'<div class="fc-abil">{"".join(parts)}</div>'
 

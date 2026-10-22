@@ -465,7 +465,8 @@ def top_bar() -> None:
     """로고(누르면 처음 홈) · 메뉴. 넓은 화면은 한 줄, 좁은 화면에서만 다음 줄로 (ui_parts.css 의 .st-key-navbar)."""
     nav_bridge()
     with st.container(key="navbar"):
-        brand, *cols = st.columns([1.8] + [1.2] * len(NAV), vertical_alignment="center")
+        # 칸 너비는 글자 길이에 맞춘다 — 모두 같으면 가장 긴 '🧠 스쿼드 · 전술'이 고른(굵은 초록) 버튼일 때 칸을 넘쳤다
+        brand, *cols = st.columns([1.8] + [0.6 + 0.1 * len(label) for _, label in NAV], vertical_alignment="center")
         with brand.container(key="nav_brand_box"):   # 로고는 글자 그대로 — 위에 투명 버튼을 겹쳐 누르면 처음 홈
             st.markdown('<div class="fc-logo">⚽ FC LAB</div>', unsafe_allow_html=True)
             st.button("FC LAB 홈으로", key="nav_brand", on_click=go_home, width="stretch")

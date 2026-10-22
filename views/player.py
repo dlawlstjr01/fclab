@@ -18,7 +18,7 @@ from data_prep.prompts import TASK_LABELS
 from services.ai import scout_line
 from services.cardinfo import bonus_stats
 from services.insights import percentiles, position_usage, trade_prices
-from services.teamcolor import enhance_details
+from services.teamcolor import effect_bonus, enhance_details
 from data_prep.tactics import OVR_GRID
 from views.common import (Ctx, add_to_compare, back_button, card_basics, dialog_open, enrich, friendly_error, get_player,
                           log, render_sources, run_with_status, tile_grid, with_saves)
@@ -121,14 +121,12 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
     if conditions:   # 지금 등급으로 고를 수 있는 강화 팀컬러는 굵게 — 백금빛 물결이 왜 안 보이는지(11강 미만) 바로 알 수 있게
         st.caption("강화 팀컬러 조건: " + " · ".join(f"**{n} {g}강+**" if g <= grade else f"{n} {g}강+" for g, n in conditions)
                    + f" — 지금 +{grade}강은 굵은 것만 고를 수 있습니다.")
-    enhance_effects = [level_effects(*enhance)] if enhance[0] else []
-    other_effects = ([level_effects(pick["id"], level)] if pick else []) + ([level_effects(relation["id"], None)] if relation else [])
+    effects = ([level_effects(*enhance)] if enhance[0] else []) + ([level_effects(pick["id"], level)] if pick else []) \
+        + ([level_effects(relation["id"], None)] if relation else [])
     extras = ([f"적응도 +{adapt}"] if adapt > 1 else []) + ([enhance_label(enhance).split(" (")[0]] if enhance[0] else []) \
         + ([f"{pick['name']} Lv.{level}"] if pick else []) + ([relation["name"]] if relation else [])
     combo = (grade, adapt, (pick["id"], level) if pick else (0, 0), enhance, relation["id"] if relation else 0)
-    # effects = 고른 팀컬러 전부 (계산용) · other_effects = 강화 팀컬러를 뺀 것 (초록 +N 의 기준 — 화면은 강화 팀컬러만 +N 으로)
-    return {"grade": grade, "combo": combo, "effects": enhance_effects + other_effects, "other_effects": other_effects,
-            "extras": extras}
+    return {"grade": grade, "combo": combo, "effects": effects, "extras": extras}
 
 
 def _stars_html(base: int | None, grade: int) -> str:
@@ -155,8 +153,13 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         boosted = ctx.cards.exact(spid, pick["combo"])
         if boosted:
             shown, exact = {**boosted, "exact": True}, True
-    # 초록 +N 의 기준 — 강화 · 적응도 · 소속/특성 팀컬러는 숫자에 바로 넣고, +N 은 강화 팀컬러로 더 오른 만큼만
-    base = bonus_stats(info, grade, adapt, [e for e in pick["other_effects"] if e])
+    # 초록 +N 의 기준은 강화까지만 — +N 은 그 위에 적응도 · 강화 팀컬러 · 소속 팀컬러(특정 능력치만 오르는 것도 그 능력치에) ·
+    # 특성 팀컬러로 더 오른 만큼
+    base = bonus_stats(info, grade, 1, [])
+    focus: dict[str, int] = {}   # 팀컬러가 '전체 능력치' 말고 따로 올려 주는 능력치 (예: 바르셀로나 Lv.4 짧은 패스 +3 · 볼 컨트롤 +3)
+    for effect in pick["effects"]:
+        for name, value in effect_bonus(effect or [])[1].items():
+            focus[name] = focus.get(name, 0) + value
     note = f"+{grade}강" + (f" · {' · '.join(pick['extras'])}" if pick["extras"] else "")
     mark = "" if exact else " ≈"
     stats = ctx.db.card_stats([spid]).get(spid) or {}
@@ -184,8 +187,14 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
     st.markdown('<div class="fc-sum">' + "".join(f"<div><span>{k}</span>{v}</div>" for k, v in cells) + "</div>",
                 unsafe_allow_html=True)
     if not exact and not plain:
-        st.caption("≈ 특정 능력치만 올리는 팀컬러가 포지션별 OVR 에 미치는 정도를 데이터센터에서 받는 중 — 받는 대로 정확한 값으로 바뀝니다.")
-        _exact_watch(ctx, spid, pick["combo"])
+        # 받는 중일 때만 지켜본다 — 데이터센터가 꺼졌거나 받기에 실패하면 기다릴 것이 없는데, 그때도 지켜보면
+        # '안 왔다 → 다시 그리기'를 끝없이 되풀이했다 (화면이 계속 깜빡이고 멈추지 않음)
+        if ctx.cards.exact_waiting(spid, pick["combo"]):
+            st.caption("≈ 특정 능력치만 올리는 팀컬러가 포지션별 OVR 에 미치는 정도를 데이터센터에서 받는 중 — 받는 대로 정확한 값으로 바뀝니다.")
+            _exact_watch(ctx, spid, pick["combo"])
+        else:
+            st.caption("≈ 특정 능력치만 올리는 팀컬러가 포지션별 OVR 에 미치는 정도는 추정값입니다 (데이터센터 계산을 받지 못함). "
+                       "능력치 숫자는 정확합니다.")
     icons = {tc["id"]: tc.get("icon", "") for tc in ctx.teamcolors.all()}
     colors = [(group, t["name"], icons.get(t["id"], "")) for group in ("소속", "관계")
               for t in (info.get("teamcolors") or {}).get(group, [])]
@@ -201,9 +210,10 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         f'<div class="fc-panel"><div class="title">클럽 경력</div>{ui_parts.club_history(info.get("clubs") or [])}</div>'
         "</div>", unsafe_allow_html=True)
     right.markdown(
-        f'<div class="fc-stack"><div class="fc-panel"><div class="title">능력치<small>{escape(note)} · 강화 · 적응도는 숫자에 바로, '
-        f'초록 +N 은 강화 팀컬러로 더 오른 만큼</small></div>'
-        f'{ui_parts.ability_table(shown.get("stats") or {}, shown.get("summary") or {}, 0, base["stats"])}'
+        f'<div class="fc-stack"><div class="fc-panel"><div class="title">능력치<small>{escape(note)} · 초록 +N 은 강화 위에 '
+        f'적응도 · 팀컬러(강화 · 소속 · 특성)로 더 오른 만큼'
+        f'{" · 초록 줄은 팀컬러가 따로 올려 주는 능력치" if focus else ""}</small></div>'
+        f'{ui_parts.ability_table(shown.get("stats") or {}, shown.get("summary") or {}, 0, base["stats"], focus)}'
         "</div></div>", unsafe_allow_html=True)
 
 
