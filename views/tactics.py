@@ -31,7 +31,7 @@ from data_prep.tactics import (BASE_POSITION, FORMATION_GROUPS, FORMATIONS, LINE
 from services.ai import recommend_tactics
 from services.insights import latest_squad
 from services.squad import MODE_NAMES, PAY_CAP, SquadAdvisor, explain
-from services.teamcolor import GROUPS, effect_bonus, squad_teamcolors
+from services.teamcolor import GROUPS, effect_bonus, enhance_details, squad_teamcolors
 from views.common import Ctx, crests_of, dialog_open, enrich_many, friendly_error, get_player, go, log, render_sources
 from views.pitch import dropped, pitch, pitch_slots, slot_ovrs
 from views.widgets import card_picker, grade_buttons
@@ -291,7 +291,7 @@ def squad_view(ctx: Ctx, codes: list[str], players: dict[str, dict | None], grad
                 "teamcolors": (s["info"] or {}).get("teamcolors") if s["info"] else None} for code, s in slots.items()]
     used = {t["id"] for m in members for g in ("소속", "관계") for t in (m["teamcolors"] or {}).get(g, [])}
     # 강화 팀컬러(동빛 ~ 백금빛 물결)는 단계('N강 이상')를 모르면 계산에서 빠진다 — 없으면 지금 받는다 (처음 한 번)
-    team = squad_teamcolors(members, teamcolors, ctx.teamcolors.details(sorted(used)) | ctx.teamcolors.enhance_details())
+    team = squad_teamcolors(members, teamcolors, ctx.teamcolors.details(sorted(used)) | enhance_details(ctx.teamcolors))
     tc_ids = team["need_detail"]
     ctx.teamcolors.want(tc_ids)
     exact_jobs = _teamcolor_ovrs(ctx, slots, team)

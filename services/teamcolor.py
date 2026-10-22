@@ -100,27 +100,6 @@ class TeamColorService:
             self.db.put_teamcolor_detail(teamcolor_id, detail)
         return detail
 
-    def enhance_details(self) -> dict[int, dict]:
-        """강화 팀컬러(동빛 · 은빛 · 금빛 · 백금빛 물결 …)의 단계 {id: detail} — 몇 개뿐이라 없는 것은 지금 받는다 (30일 보관).
-
-        '몇 강 이상 · 몇 명'은 단계 상세에만 있어서, 아직 못 받은 강화 팀컬러는 고르는 목록 · 스쿼드 계산에서 빠진다.
-        뒤에서 받기를 기다리면 처음 연 화면에서 백금빛 물결(11강 이상)이 없는 것처럼 보였다."""
-        ids = [tc["id"] for tc in self.all() if tc["kind"] == "강화"]
-        have = self.details(ids)
-        now = time.monotonic()
-        for i in ids:
-            if i in have or not self.enabled or now - self._failed.get(i, -RETRY_SECONDS) < RETRY_SECONDS:
-                continue
-            try:
-                detail = self.detail_now(i)
-            except Exception as exc:  # noqa: BLE001 — 하나 실패해도 나머지는 보여 준다
-                log.warning("강화 팀컬러 %s 단계 받기 실패: %s", i, exc)
-                self._failed[i] = time.monotonic()
-                continue
-            if detail:
-                have[i] = detail
-        return have
-
     def want(self, ids: list[int]) -> None:
         if not self.enabled:
             return
@@ -174,6 +153,29 @@ def levels_of(tc: dict, detail: dict | None) -> list[dict] | None:
     if tc.get("max_level") == 1:
         return [{"level": 1, "count": tc["max_count"], "effects": tc.get("effects", [])}]
     return None
+
+
+def enhance_details(service: TeamColorService) -> dict[int, dict]:
+    """강화 팀컬러(동빛 · 은빛 · 금빛 · 백금빛 물결 …)의 단계 {id: detail} — 몇 개뿐이라 없는 것은 지금 받는다 (30일 보관).
+
+    '몇 강 이상 · 몇 명'은 단계 상세에만 있어서, 아직 못 받은 강화 팀컬러는 고르는 목록 · 스쿼드 계산에서 빠진다.
+    뒤에서 받기를 기다리면 처음 연 화면에서 백금빛 물결(11강 이상)이 없는 것처럼 보였다.
+    서비스의 메서드가 아니라 함수로 둔다 — 앱이 켜진 채 코드가 바뀌어도(st.cache_resource 에 남은 옛 서비스 객체로도) 돈다."""
+    ids = [tc["id"] for tc in service.all() if tc["kind"] == "강화"]
+    have = service.details(ids)
+    now = time.monotonic()
+    for i in ids:
+        if i in have or not service.enabled or now - service._failed.get(i, -RETRY_SECONDS) < RETRY_SECONDS:
+            continue
+        try:
+            detail = service.detail_now(i)
+        except Exception as exc:  # noqa: BLE001 — 하나 실패해도 나머지는 보여 준다
+            log.warning("강화 팀컬러 %s 단계 받기 실패: %s", i, exc)
+            service._failed[i] = time.monotonic()
+            continue
+        if detail:
+            have[i] = detail
+    return have
 
 
 def squad_teamcolors(members: list[dict], teamcolors: list[dict], details: dict[int, dict]) -> dict:

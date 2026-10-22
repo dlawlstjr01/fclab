@@ -18,6 +18,7 @@ from data_prep.prompts import TASK_LABELS
 from services.ai import scout_line
 from services.cardinfo import bonus_stats
 from services.insights import percentiles, position_usage, trade_prices
+from services.teamcolor import enhance_details
 from data_prep.tactics import OVR_GRID
 from views.common import (Ctx, add_to_compare, back_button, card_basics, dialog_open, enrich, friendly_error, get_player,
                           log, render_sources, run_with_status, tile_grid, with_saves)
@@ -76,7 +77,7 @@ def _bonus_controls(ctx: Ctx, player: dict, info: dict) -> dict:
     own = (info.get("teamcolors") or {}).get("소속", [])
     features = (info.get("teamcolors") or {}).get("관계", [])
     # 강화 팀컬러는 단계('N강 이상')를 알아야 목록에 들어가므로 없으면 지금 받는다 (처음 한 번 · 몇 개뿐)
-    details = ctx.teamcolors.details([t["id"] for t in own + features]) | ctx.teamcolors.enhance_details()
+    details = ctx.teamcolors.details([t["id"] for t in own + features]) | enhance_details(ctx.teamcolors)
     ctx.teamcolors.want([t["id"] for t in own + features])   # 단계별 효과를 미리 — 고르자마자 바로 계산되게
     grade = grade_buttons("강화", f"pc_grade_{spid}")
     a_col, e_col, t_col, l_col, r_col, x_col = st.columns([0.8, 2.1, 2.1, 0.9, 2.1, 1], vertical_alignment="bottom")
