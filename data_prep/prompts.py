@@ -252,3 +252,40 @@ def explore_messages(condition: str, candidates: list[dict], notes: dict[str, st
         _system(EXPLORE_SYSTEM),
         {"role": "user", "content": f"[조건]\n{condition}\n\n[후보]\n{listing}"},
     ]
+
+
+# ── 조건 읽기 (AI 로 찾기) — 사람의 말을 검색 조건으로만 바꾼다. 선수를 고르거나 국적을 판단하지 않는다 (F2011) ──
+
+FIND_SYSTEM = """너는 FC 온라인 선수 검색 도우미다. 사용자가 원하는 선수 조건을 [조건]에서 읽어 검색 칸으로 옮긴다.
+
+규칙
+- 선수를 추천하거나 이름을 지어내지 않는다. 조건에 적힌 말만 옮긴다.
+- 칸: nation(국적, 예: 일본 · 대한민국 · 브라질), league(리그, 예: 프리미어리그 · 라리가), club(클럽, 예: 레알 마드리드),
+  position(포지션 묶음 하나: 스트라이커 · 윙어 · 공격형 미드필더 · 중앙 미드필더 · 수비형 미드필더 · 풀백 · 센터백 · 골키퍼 ·
+  공격수 · 미드필더 · 수비수), legend(레전드 · 은퇴 선수면 true, 현역이면 false, 말이 없으면 null),
+  traits(보유 특성 이름 목록), foot(오른발 · 왼발), ability(가장 중요하게 본 능력치 하나: 속력 · 골 결정력 · 드리블 ·
+  짧은 패스 · 시야 · 크로스 · 태클 · 대인 수비 · 헤더 · 몸싸움 · 스태미너 …).
+- 조건에 없는 칸은 null. 한국어 이름으로 쓴다.
+
+출력: JSON 객체 하나만. 예) {"nation": "일본", "league": null, "club": null, "position": "미드필더", "legend": null,
+"traits": [], "foot": null, "ability": null}"""
+
+
+def find_messages(condition: str) -> list[dict]:
+    return [_system(FIND_SYSTEM), {"role": "user", "content": f"[조건]\n{condition}"}]
+
+
+# ── 문서에 없을 때 — 일반 지식 답변 (근거 문서로 확인되지 않은 부분만, 따로 표시해서 보여 준다) ──
+
+GENERAL_SYSTEM = """너는 축구 전문 기자다. 수집한 위키백과 문서에서 답을 찾지 못한 질문에, 네가 아는 일반 지식으로 답한다.
+
+규칙
+- 확실히 아는 것만 쓴다. 확실하지 않으면 "확실하지 않습니다"라고 밝히고 추측하지 않는다.
+- 날짜 · 숫자 · 기록은 확실할 때만 쓴다.
+- 근거 번호([근거 N])는 붙이지 않는다 — 이 답은 문서로 확인한 것이 아니다.
+- 한국어로 3~6문장, 핵심부터."""
+
+
+def general_messages(player: dict, question: str) -> list[dict]:
+    return [_system(GENERAL_SYSTEM),
+            {"role": "user", "content": f"[선수]\n{player_label(player)}\n\n[질문]\n{question}"}]

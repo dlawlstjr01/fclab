@@ -31,6 +31,8 @@ from rag.graph import build_graph
 from services.ai import AiCache
 from services.answering import run_task
 from services.cardinfo import CardInfoService
+from services.daily import DailyBoard
+from services.finder import CardFinder
 from services.images import ImageCache
 from services.market import MarketService
 from services.prefetch import Prefetcher
@@ -69,6 +71,8 @@ class Ctx:
     datacenter: DatacenterClient | None   # 데이터센터 창구 (AI 추천 스쿼드 · 강화 부스트), 시세를 끄면 None
     teamcolors: TeamColorService  # 팀컬러 목록 · 단계별 효과 (데이터센터) — SQLite 에, 새 팀컬러는 더한다
     stats: StatsCrawler          # 모든 카드의 능력치 · 급여 · OVR (데이터센터 선수 검색) — 뒤에서 모은다
+    finder: CardFinder           # 조건으로 카드 찾기 (국적 · 리그 · 클럽 · 팀컬러 · 특성 · 주발 …) — 선수 찾기 · AI 찾기
+    daily: DailyBoard            # 데일리 기록 · 차트 (랭커가 어제 쓴 카드 기록 TOP · 포메이션 · 포지션별 이용)
 
 
 def friendly_error(exc: Exception) -> str:
@@ -187,6 +191,18 @@ def _teamcolors(_settings, _db) -> TeamColorService:
 
 
 @st.cache_resource
+def _finder(_settings, _db, _catalog) -> CardFinder:
+    """조건 검색 (앱 프로세스에 하나) — 검색 화면의 목록(국적 · 리그 · 클럽 · 특성)과 레전드 선수를 한 번 읽어 둔다."""
+    return CardFinder(_datacenter(_settings), _db, _catalog, _teamcolors(_settings, _db))
+
+
+@st.cache_resource
+def _daily(_settings, _db) -> DailyBoard:
+    """데일리 기록 · 차트 (앱 프로세스에 하나) — 하루에 한 번 받아 SQLite 에 둔다."""
+    return DailyBoard(_datacenter(_settings), _db)
+
+
+@st.cache_resource
 def _stats(_settings, _db) -> StatsCrawler:
     """모든 카드의 능력치 · 급여 수집 (앱 프로세스에 하나) — 켜질 때 시작해 뒤에서 이어서 모은다."""
     crawler = StatsCrawler(_datacenter(_settings), _db, _settings.market_enabled and _settings.stats_enabled,
@@ -259,7 +275,7 @@ def boot() -> Ctx:
     return Ctx(settings, players, {p["player_id"]: p for p in players}, by_pid, catalog, nexon, model, store,
                collector, graph, AiCache(db), db, prefetcher, Favorites(db), theme, curated_ids,
                _market(settings, db, catalog), _cards(settings, db), _datacenter(settings), _teamcolors(settings, db),
-               _stats(settings, db))
+               _stats(settings, db), _finder(settings, db, catalog), _daily(settings, db))
 
 
 # ── 이동 · 브라우저 뒤로가기 ─────────────────────────────────────────
@@ -647,6 +663,14 @@ def card_basics(ctx: Ctx, spids: list[int]) -> dict[int, dict]:
                      "pay": row.get("pay") if row.get("pay") is not None else info.get("pay"),
                      "foot": info.get("foot_lr") or row.get("foot"), "info": bool(info)}
     return out
+
+
+@st.fragment(run_every=2)
+def daily_wait(ctx: Ctx) -> None:
+    """데일리 차트 · 기록을 받는 동안 2초마다 — 다 받으면(또는 받지 못하고 끝나면) 한 번 다시 그린다."""
+    if not ctx.daily.pending() and not dialog_open():
+        st.rerun()
+    st.caption("⏳ 데이터센터 데일리 기록 · 차트를 받는 중… (하루에 한 번)")
 
 
 def dialog_open() -> bool:

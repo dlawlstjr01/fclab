@@ -455,6 +455,64 @@ fake_ctx = SimpleNamespace(cards=SimpleNamespace(get=lambda spids: {1: {"ovr": 1
                            db=SimpleNamespace(card_stats=lambda spids: {s: {"ovr": 120} for s in spids if s == 3}))
 check(by_ovr(fake_ctx, [4, 1, 2, 3]) == [3, 1, 4, 2],
       "같은 선수의 시즌은 OVR 높은 순 (모르는 카드는 뒤에, 그 안에서는 최신 시즌부터) — 선수 고르기 · 이미지 고르기 · 다른 시즌")
+from data_prep.datacenter import parse_daily_stats, parse_formations, parse_search_options  # noqa: E402
+from data_prep.enhance import odds as _odds  # noqa: E402
+from services.finder import Filters, legend_pids, parse_rules  # noqa: E402
+from services.partners import pair_plan, recommend, solo_share  # noqa: E402
+
+search_html = ("<a onclick=\"DataCenter.SetTeamOption('13');\"><span>잉글랜드 프리미어리그</span></a>"
+               "<a class=\"club_item selector_item _1\" data-no=\"13\" onclick=\"DataCenter.SetAbilitySearch('1', 'n4TeamId'); x\">"
+               "<span>아스널</span></a>"
+               "<a onclick=\"DataCenter.SetAbilitySearch('163', 'n4NationId'); x\"><span>일본</span></a>"
+               "<a onclick=\"DataCenter.SetAbilitySearch('54', 'n4NationId'); x\"><span>브라질</span></a>"
+               "<a onclick=\"DataCenter.SetAbilitySearch('스피드 드리블러', 'strTrait1'); x\"><span>스피드 드리블러</span></a>")
+opts = parse_search_options(search_html)
+check(opts["nations"] == {"일본": 163, "브라질": 54} and opts["leagues"] == {"잉글랜드 프리미어리그": 13}
+      and opts["teams"] == {"아스널": 1} and opts["team_league"] == {1: 13} and opts["traits"] == ["스피드 드리블러"],
+      "데이터센터 선수 검색 화면 → 국적 · 리그 · 클럽(리그) · 보유 특성 목록")
+jp = parse_rules("일본 출신 미드필더", opts, [], {})
+br = parse_rules("드리블이 좋은 브라질 윙어 스피드 드리블러", opts, [], {})
+epl = parse_rules("프리미어리그 레전드 미드필더", opts, [], {})
+check(jp.nation == "일본" and jp.positions == ("CAM", "CM", "CDM", "LM", "RM") and jp.legend is None
+      and br.nation == "브라질" and br.positions == ("LW", "RW", "LM", "RM") and br.traits == ("스피드 드리블러",)
+      and br.ability == "dribbling" and epl.league == "잉글랜드 프리미어리그" and epl.legend is True
+      and Filters().empty() and not jp.empty(),
+      "AI 찾기 조건 읽기: '일본 출신 미드필더' → 국적 일본 · 미드필더(CAM·CM·CDM·LM·RM), 특성 이름의 '스피드'는 능력치로 읽지 않음, "
+      "'레전드'는 아이콘 카드가 있는 선수로 (국적을 LLM 이 판단하지 않는다)")
+fake_cat = SimpleNamespace(seasons={101: {"className": "ICON (ICON)"}, 300: {"className": "25 LIVE (25 LIVE)"},
+                                    850: {"className": "LN (LEGENDARY NUMBERS)"}},
+                           by_pid={7: [101000007, 850000007], 8: [300000008]})
+check(legend_pids(fake_cat) == {7}, "레전드 = 아이콘 카드가 있는 선수 — 그 선수의 다른 시즌(LN) 카드도 레전드 카드")
+daily_html = ('<div class="tr"><div class="td p_name"><div class="info_top"><div class="name">안드리 셰우첸코</div></div>'
+              '<div class="info_bottom"><span class="season"><img src="https://x/externalAssets/new/season/UC.png"></span>'
+              '<span class="ability en_level10">10</span><span class="position fw"><span class="txt">ST</span>'
+              '<span class="skillData_877013128">144</span> </span><span class="pay">34</span></div></div>'
+              '<div class="td p_at"> 105 </div><div class="td p_atp active"> 2.0<br />(207) </div>'
+              '<div class="td p_p"> 88.4%<br />1,007/1,139 </div><div class="td p_av"> 8.3 </div></div>')
+daily_rows = parse_daily_stats(daily_html)
+check(daily_rows and daily_rows[0]["spid"] == 877013128 and daily_rows[0]["grade"] == 10 and daily_rows[0]["matches"] == 105
+      and daily_rows[0]["stats"]["ATTACKPOINT"] == 2.0 and daily_rows[0]["stats"]["ATTACKPOINT_total"] == 207
+      and daily_rows[0]["stats"]["PASS"] == 88.4 and daily_rows[0]["stats"]["PASS_try"] == 1139
+      and daily_rows[0]["stats"]["RATING"] == 8.3 and daily_rows[0]["season_code"] == "UC",
+      "데일리 기록(선수 기록 TOP) 읽기 — 카드 · 시즌 · 강화 · 포지션 OVR · 급여 · 출전 · 경기당(합계) · 성공률(시도) · 평점")
+forms = parse_formations('<div class="swiper-slide formation_list__item"><div class="txt">4-2-3-1</div>'
+                         '<div class="per">697명 (16.8%)</div></div>'
+                         '<div class="swiper-slide formation_list__item"><div class="txt">4-2-2-2</div>'
+                         '<div class="per">1,611명 (38.8%)</div></div>')
+share, alone = solo_share("스트라이커", forms)
+check(forms[1] == {"formation": "4-2-2-2", "users": 1611, "share": 38.8} and abs(share - 16.8 / 55.6) < 1e-9
+      and alone == ["4-2-3-1"] and pair_plan("GK") is None and pair_plan("LCB")["partner"] == "CB"
+      and pair_plan("LW")["partner"] == "RW",
+      "짝 추천: 포메이션 이용률로 '혼자 쓰는 자리' 비율(원톱 4-2-3-1 vs 투톱 4-2-2-2), 골키퍼는 없음, 측면은 반대쪽이 짝")
+picks = recommend({"spid": 1, "pid": 1}, {"stats": {"속력": 100, "골 결정력": 130}},
+                  pair_plan("ST"), [{"spid": 2, "name": "빠른", "share": 10.0}, {"spid": 3, "name": "느린", "share": 12.0},
+                                    {"spid": 1000001, "name": "같은 선수", "share": 30.0}],
+                  {2: {"stats": {"sprintspeed": 140, "finishing": 120}}, 3: {"stats": {"sprintspeed": 95, "finishing": 125}}})
+check([p_["name"] for p_ in picks] == ["빠른", "느린"] and "속력 +40" in picks[0]["reason"],
+      "짝 추천: 같은 선수는 빼고, 랭커 이용 비율 + 이 카드의 약한 능력치를 메워 주는 정도 (빠른 짝이 위 — 속력 +40)")
+check(round(_odds(7, 8, 100.0, None, protect=True)["mean"], 1) == round(1 / 0.07, 1)
+      and _odds(7, 8, 100.0)["mean"] > 1000,
+      "강화 시뮬: 등급 보호(실패해도 그대로)면 +7→+8 평균 14.3번, 공식 복구표대로 내려가면 평균 4,000번 넘게")
 row_scale = ui_parts.ability_compare(
     {"shown": {"ovr": 124, "summary": {"스피드": 118}, "stats": {"속력": 118, "가속력": 120}}, "base": {}, "mark": "", "note": "",
      "name": "A", "position": "CF"},
@@ -908,8 +966,10 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
           "강화 시뮬: +1 → +2 는 100% 성공, 목표까지 평균 시도 · 50% · 90% 횟수를 계산")
     check(any('class="fc-growbd"' in m.value and "강화 확률" in m.value for m in at.markdown)
           and any('class="fc-growrec"' in m.value and "<td>1</td>" in m.value for m in at.markdown)
-          and any('class="fc-growcard"' in m.value and 'class="pc"' in m.value for m in at.markdown),
-          "강화 시뮬: 공식 시뮬레이터처럼 — 큰 카드 · 지금 › 다음 등급 칸 · 강화 확률 · 게이지 칸 · 전체/성공/실패/성공 비율 표")
+          and any('class="fc-growstage ok"' in m.value and 'class="fx ok"' in m.value and 'class="pc"' in m.value
+                  for m in at.markdown),
+          "강화 시뮬: 공식 시뮬레이터처럼 — 큰 카드 · 지금 › 다음 등급 칸 · 강화 확률 · 게이지 칸 · 전체/성공/실패/성공 비율 표, "
+          "성공하면 카드 아래 양옆에서 불꽃 연출")
     at.session_state["gr_target"] = 4
     at.run()
     at.button(key="gr_goal").click().run()
@@ -918,12 +978,20 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
           and run_state["tries"] == 1 + run_state["goal"]["tries"] and at.button(key="gr_goal").disabled,
           f"강화 시뮬: '+4 까지 강화' → 닿을 때까지 계속 ({run_state['goal']['tries']}번 · 기록 표에 모두 셈)")
     at.checkbox(key="gr_lock").check().run()
+    at.session_state["gr_target"] = run_state["grade"] + 1
+    at.run()
     before = (run_state["grade"], run_state["tries"])
-    for _ in range(5):
-        at.button(key="gr_try").click().run()
+    at.button(key="gr_goal").click().run()
     run_state = at.session_state["gr_run"]
-    check(run_state["grade"] == before[0] and run_state["tries"] == before[1] + 5 and at.button(key="gr_goal").disabled,
-          f"강화 시뮬: 지금 등급 고정 → 5번 강화해도 +{before[0]} 그대로, 결과만 센다 (목표까지 버튼은 꺼짐)")
+    goal = run_state["goal"]
+    check(not at.exception and goal["protect"] and goal["reached"] and run_state["grade"] == before[0] + 1
+          and goal["tries"] == goal["last_tries"] and all(h["to"] >= h["from"] for h in run_state["history"][:goal["tries"]])
+          and any("처음 닿아 멈췄습니다" in m.value for m in at.success),
+          f"강화 시뮬: 지금 등급 고정(등급 보호) + '+{before[0] + 1} 까지' → 실패해도 내려가지 않고 첫 성공에 멈춘다 ({goal['tries']}번)")
+    steps = run_state["steps"]
+    check(str(before[0]) in steps and steps[str(before[0])]["ok"] + steps[str(before[0])]["crit"] >= 1
+          and any('class="fc-growrec steps"' in m.value and "이론 확률" in m.value for m in at.markdown),
+          "강화 시뮬: 단계(+N → +N+1)마다 시도 · 성공 · 실패 · 성공 비율과 이론 확률 표 (전체 비율은 쉬운 단계가 섞여 높게 보여서)")
     at.button(key="nav_players").click().run()
     check(not at.exception and any('class="fc-prow"' in m.value for m in at.markdown) or not at.session_state.get("pl_page") is None,
           "선수 찾기: 공식 스쿼드 메이커처럼 선수 줄 목록")

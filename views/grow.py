@@ -44,19 +44,24 @@ def _count(n: float | None) -> str:
 
 def _reset_run(spid: int, start: int) -> None:
     st.session_state.gr_run = {"spid": spid, "start": start, "grade": start, "history": [], "tries": 0, "ok": 0, "crit": 0,
-                               "fail": 0, "goal": None}
+                               "fail": 0, "goal": None, "steps": {}, "fx": None}
 
 
-def _step(run: dict, boost: float, same_grade: int | None, rng: random.Random) -> None:
-    """한 번 강화하고 기록한다. '지금 등급 고정'이면 결과만 세고 등급은 그대로 (같은 단계의 성공 확률을 여러 번 시험)."""
+def _step(run: dict, boost: float, same_grade: int | None, rng: random.Random) -> str:
+    """한 번 강화하고 기록한다 — 단계(+N → +N+1)마다 시도 · 성공 · 실패를 따로 센다 (성공 비율은 단계마다 봐야 뜻이 있다).
+    '지금 등급 고정'(등급 보호)이면 실패해도 등급이 내려가지 않는다."""
     before = run["grade"]
-    after, outcome = attempt(before, boost, same_grade, rng)
-    if not st.session_state.get("gr_lock"):
-        run["grade"] = after
+    after, outcome = attempt(before, boost, same_grade, rng, protect=bool(st.session_state.get("gr_lock")))
+    run["grade"] = after
     run["tries"] += 1
-    run[{"성공": "ok", "크리티컬": "crit", "실패": "fail"}[outcome]] += 1
+    kind = {"성공": "ok", "크리티컬": "crit", "실패": "fail"}[outcome]
+    run[kind] += 1
+    step = run["steps"].setdefault(str(before), {"tries": 0, "ok": 0, "crit": 0, "fail": 0})
+    step["tries"] += 1
+    step[kind] += 1
     run["history"].insert(0, {"from": before, "to": after, "outcome": outcome, "rate": success_rate(before, boost)})
     del run["history"][HISTORY:]
+    return outcome
 
 
 def _one_try(boost: float, same_grade: int | None) -> None:
@@ -64,16 +69,27 @@ def _one_try(boost: float, same_grade: int | None) -> None:
     if run["grade"] >= MAX_GRADE:
         return
     run["goal"] = None
-    _step(run, boost, same_grade, random.Random())
+    outcome = _step(run, boost, same_grade, random.Random())
+    run["fx"] = {"n": run["tries"], "outcome": outcome}   # 연출 — 성공 불꽃 · 실패 연기 (시도마다 새로)
 
 
 def _to_goal(boost: float, same_grade: int | None, target: int) -> None:
-    """목표 등급에 닿을 때까지 계속 강화 (최대 GOAL_CAP 번) — 몇 번 만에 닿았는지 남긴다."""
+    """목표 등급에 처음 닿을 때까지 계속 강화하고 멈춘다 (최대 GOAL_CAP 번). 등급 보호가 꺼져 있으면 실패로 등급이 내려가
+    다시 올라오느라 다른 단계의 성공도 섞인다 — 그래서 가장 낮게 내려간 등급과 마지막 단계의 시도 수를 함께 남긴다."""
     run = st.session_state.gr_run
     rng, start, before = random.Random(), run["grade"], run["tries"]
+    lowest, last_step = start, {"tries": 0, "ok": 0}
     while run["grade"] < target and run["tries"] - before < GOAL_CAP:
-        _step(run, boost, same_grade, rng)
-    run["goal"] = {"from": start, "target": target, "tries": run["tries"] - before, "reached": run["grade"] >= target}
+        grade = run["grade"]
+        outcome = _step(run, boost, same_grade, rng)
+        lowest = min(lowest, run["grade"])
+        if grade == target - 1 or (outcome == "크리티컬" and grade == target - 2):
+            last_step["tries"] += 1
+            last_step["ok"] += outcome != "실패"
+    reached = run["grade"] >= target
+    run["goal"] = {"from": start, "target": target, "tries": run["tries"] - before, "reached": reached, "lowest": lowest,
+                   "last_tries": last_step["tries"], "protect": bool(st.session_state.get("gr_lock"))}
+    run["fx"] = {"n": run["tries"], "outcome": "성공" if reached else "실패"}
 
 
 def _materials(ctx: Ctx, spid: int, grade: int) -> tuple[float | None, int | None]:
@@ -169,7 +185,7 @@ def render(ctx: Ctx) -> None:
             cost = int(per_try * 10**8) or None
 
     run = st.session_state.get("gr_run")
-    if not run or run["spid"] != spid or run["start"] != start or "tries" not in run:   # 예전 형식(기록 칸 없음)도 새로
+    if not run or run["spid"] != spid or run["start"] != start or "steps" not in run:   # 예전 형식(단계별 기록 없음)도 새로
         _reset_run(spid, start)
         run = st.session_state.gr_run
     rate = success_rate(run["grade"], boost) if run["grade"] < MAX_GRADE else 0.0
@@ -180,9 +196,11 @@ def render(ctx: Ctx) -> None:
     info = ctx.cards.get([spid]).get(spid) or {}
     locked = bool(st.session_state.get("gr_lock"))
     with out_col:
-        # 공식 강화 시뮬레이터처럼 가운데에 — 큰 카드(OVR · 포지션 · 급여 · 강화 · 이름 · 국기) → 지금 › 다음 등급 → 확률 · 게이지 칸
-        st.markdown(f'<div class="fc-growcard">{ui_parts.pitch_card(player, position or "", ovr_at_grade(base_ovr, run["grade"]), True, run["grade"], basics.get("pay"), None, info.get("nation_flag", ""), "", high=True)}</div>',
-                    unsafe_allow_html=True)
+        # 공식 강화 시뮬레이터처럼 가운데에 — 큰 카드(OVR · 포지션 · 급여 · 강화 · 이름 · 국기) → 지금 › 다음 등급 → 확률 · 게이지 칸.
+        # 방금 강화한 결과는 카드 아래 양옆에서 — 성공이면 불꽃, 실패면 연기 (시도마다 새로 재생)
+        card = ui_parts.pitch_card(player, position or "", ovr_at_grade(base_ovr, run["grade"]), True, run["grade"],
+                                   basics.get("pay"), None, info.get("nation_flag", ""), "", high=True)
+        st.markdown(ui_parts.grow_stage(card, run.get("fx")), unsafe_allow_html=True)
         st.markdown(ui_parts.grow_board(run["grade"], rate, boost, SUCCESS.get(run["grade"], 0), critical,
                                         run["history"][0] if run["history"] else None, locked), unsafe_allow_html=True)
         if run["grade"] < MAX_GRADE:
@@ -194,18 +212,26 @@ def render(ctx: Ctx) -> None:
             b1.button("⚒️ 한 번 강화", key="gr_try", type="primary", width="stretch", on_click=_one_try, args=(boost, same_grade),
                       disabled=run["grade"] >= MAX_GRADE)
             b2.button(f"🎯 +{target} 까지 강화", key="gr_goal", type="primary", width="stretch", on_click=_to_goal,
-                      args=(boost, same_grade, target), disabled=locked or reached,
-                      help="지금 등급 고정 중에는 쓸 수 없습니다" if locked else "이미 목표 등급입니다" if reached
-                      else f"+{target} 에 닿을 때까지 계속 강화합니다 (최대 {GOAL_CAP:,}번)")
-            st.checkbox("지금 등급 고정 — 성공 · 실패해도 등급이 그대로 (이 단계의 성공 확률을 여러 번 시험)", key="gr_lock")
+                      args=(boost, same_grade, target), disabled=reached,
+                      help="이미 목표 등급입니다" if reached else f"+{target} 에 처음 닿으면 멈춥니다 (최대 {GOAL_CAP:,}번)")
+            st.checkbox("지금 등급 고정 — 실패해도 등급이 내려가지 않음 (BP 강화 등급 보호처럼)", key="gr_lock",
+                        help="끄면 공식 복구표대로 실패할 때 등급이 내려갑니다 (예: +7 실패 → +1 ~ +5)")
         goal = run.get("goal")
         if goal:
-            (st.success if goal["reached"] else st.warning)(
-                f"🎯 +{goal['from']} → +{goal['target']}: " + (f"**{goal['tries']:,}번** 만에 닿았습니다"
-                                                                 if goal["reached"] else
-                                                                 f"{goal['tries']:,}번 강화했지만 아직 +{run['grade']} (한 번에 최대 {GOAL_CAP:,}번)")
-                + (f" · 소모 선수 약 {bp(cost * goal['tries'])}" if cost else ""))
+            if goal["reached"]:
+                text = f"🎯 +{goal['from']} → +{goal['target']}: **{goal['tries']:,}번** 만에 처음 닿아 멈췄습니다"
+                if goal["tries"] > goal["last_tries"] and goal["lowest"] < goal["from"]:
+                    text += (f" — 실패로 등급이 +{goal['lowest']} 까지 내려가 다시 올리느라 다른 단계 시도가 섞였습니다. "
+                             f"+{goal['target'] - 1} → +{goal['target']} 시도는 {goal['last_tries']:,}번 (마지막 1번 성공). "
+                             "'지금 등급 고정'을 켜면 실패해도 내려가지 않아 첫 성공에 바로 멈춥니다")
+                st.success(text + (f" · 소모 선수 약 {bp(cost * goal['tries'])}" if cost else ""))
+            else:
+                st.warning(f"🎯 +{goal['from']} → +{goal['target']}: {goal['tries']:,}번 강화했지만 아직 +{run['grade']} "
+                           f"(한 번에 최대 {GOAL_CAP:,}번)")
         st.markdown(ui_parts.grow_record(run["tries"], run["ok"], run["crit"], run["fail"]), unsafe_allow_html=True)
+        steps = run.get("steps") or {}
+        if len(steps) > 1 or (steps and run["tries"] > 1):
+            st.markdown(ui_parts.grow_steps(steps, boost), unsafe_allow_html=True)
         _, r_col, _ = st.columns([1, 1, 1])
         r_col.button("↺ 초기화", key="gr_reset", width="stretch", on_click=_reset_run, args=(spid, start),
                      help=f"+{start} 로 되돌리고 기록을 지웁니다")
@@ -217,9 +243,10 @@ def render(ctx: Ctx) -> None:
                             unsafe_allow_html=True)
 
     st.markdown(f'<div class="fc-section">🎲 +{start} → +{target} 까지<small>공식 확률로 정확히 계산 (모의 실험 아님) · 게이지 '
-                f'{boost:.0f}%{" · 같은 선수 +" + str(same_grade) + " 소모" if same_grade else ""}</small></div>',
+                f'{boost:.0f}%{" · 같은 선수 +" + str(same_grade) + " 소모" if same_grade else ""}'
+                f'{" · 등급 보호 (실패해도 그대로)" if locked else " · 실패하면 공식 복구표대로 내려감"}</small></div>',
                 unsafe_allow_html=True)
-    result = odds(start, target, boost, same_grade)
+    result = odds(start, target, boost, same_grade, protect=locked)
     cells = [("평균 시도", _count(result["mean"])), ("절반은 이 안에", _count(result["median"])),
              ("90%는 이 안에", _count(result["p90"])), ("100번 안에 닿을 확률", f"{result['within'][100] * 100:.2f}%")]
     if cost and result["mean"]:

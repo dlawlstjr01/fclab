@@ -9,6 +9,9 @@
     GET  /Datacenter/BestUsePositionPlayer   데일리 차트 — 포지션마다 랭커(상위 1만 명)가 많이 쓴 카드 16장
                                              (공식 경기 1 ON 1 · 감독 모드 따로, 강화별 현재가 · 이용 비율)
     GET  /datacenter                   선수 검색 화면 — 클럽 · 국적 목록(검색값 번호)을 여기서 읽는다
+    GET  /Datacenter/BestPlayerStatDetail    데일리 기록 — 어제 랭커(상위 1만 명)가 쓴 카드의 기록 TOP (출전 · 공격 포인트 ·
+                                             득점 · 도움 · 패스 · 태클 · 평점 …, 기록마다 18장 · 시즌 · 강화 · 포지션 OVR · 급여)
+    GET  /Datacenter/BestFormationInfo       데일리 차트 — 랭커 포메이션 이용률
     GET  /datacenter/teamcolor         팀컬러 801개 — 종류 · 최고 단계 · 최고 단계 효과
     GET  /datacenter/TeamColorDetail   팀컬러 1개의 단계별 조건(몇 명) · 능력치 증가
          (선수 검색의 teamcolorid 로 그 팀컬러가 적용되는 카드만 — 클럽은 '클럽 경력' 기준)
@@ -41,6 +44,8 @@ PREVIEW_PATH = "/datacenter/PlayerPreView"
 ABILITY_PATH = "/datacenter/PlayerAbility"
 GROW_PATH = "/datacenter/PlayerGrowCal"
 USAGE_PATH = "/Datacenter/BestUsePositionPlayer"
+DAILY_STAT_PATH = "/Datacenter/BestPlayerStatDetail"
+FORMATION_PATH = "/Datacenter/BestFormationInfo"
 SEARCH_PAGE = "/datacenter"
 TEAMCOLOR_PAGE = "/datacenter/teamcolor"
 TEAMCOLOR_DETAIL = "/datacenter/TeamColorDetail"
@@ -72,6 +77,17 @@ POSITION_FILTER = {
 }
 ORDER_BY = {"ovr": " overallrating descending", "price": " n8playergrade1 descending",
             "salary": " salary descending", "rating": " n4AvgAssessmentPoint descending"}
+FOOT = {"오른발": 1, "왼발": 2}   # 검색의 주발 (preferredfoot)
+REPUTATION = {"레전더리": 5, "월드클래스": 4, "탑클래스": 3, "유명선수": 2, "일반선수": 1}   # 검색의 명성 (n1InterationalRep)
+# 데일리 기록(선수 기록 TOP)의 정렬 기준 — 화면의 버튼 순서
+DAILY_STATS = {"ATTACKPOINT": "공격 포인트", "GOAL": "득점", "ASSIST": "도움", "MATCHCOUNT": "출전", "EFFSHOOT": "유효 슈팅",
+               "NORMALSHOOT": "일반 슈팅", "PASS": "패스 성공률", "DRIBBLE": "드리블 성공률", "AERIAL": "공중볼 경합",
+               "INTERCEPT": "가로채기", "TACKLE": "태클 성공률", "BLOCK": "차단 성공률", "DEFENDING": "선방(골 차단)",
+               "RATING": "평점"}
+# 데일리 기록 표의 칸 (td 의 클래스) → 이름 · 정렬 기준. 경기당 값 칸은 (평균, 합계), 성공률 칸은 (%, 성공, 시도)
+DAILY_CELLS = {"p_at": "MATCHCOUNT", "p_atp": "ATTACKPOINT", "p_g": "GOAL", "p_as": "ASSIST", "p_pg": "EFFSHOOT",
+               "p_ng": "NORMALSHOOT", "p_p": "PASS", "p_d": "DRIBBLE", "p_s": "AERIAL", "p_df": "INTERCEPT",
+               "p_tt": "TACKLE", "p_td": "BLOCK", "p_tk": "DEFENDING", "p_av": "RATING"}
 
 # 특성 — 데이터센터 '보유 특성' 검색 목록의 앞 17개가 신규 특성(2024~), 나머지가 일반 특성이다. 값은 아이콘 번호
 # (trait_icon_{번호}.png — 그 특성을 가진 카드의 선수 정보 화면에서 읽었다). 스쿼드 메이커의 '보유 신규 특성' 고르기에 쓴다.
@@ -108,6 +124,17 @@ USAGE_POS = re.compile(r'<div class="position \w+">\s*(\w+)')
 USAGE_PAY = re.compile(r'<div class="pay">.*?<span>\s*(\d+)\s*</span>', re.S)
 USAGE_NAME = re.compile(r'<span class="name"><span>\s*([^<]+?)\s*</span>')
 TEAM_OPTION = re.compile(r"SetAbilitySearch\('(\d+)', 'n4TeamId'\);[^>]*>(?:<[^>]+>)*([^<]+)")
+TEAM_LEAGUE = re.compile(r'data-no="(\d+)" onclick="DataCenter\.SetAbilitySearch\(\'(\d+)\', \'n4TeamId\'\)')
+LEAGUE_OPTION = re.compile(r"SetTeamOption\('?(\d+)'?\)[^>]*>(?:<[^>]+>)*\s*([^<]+)")
+TRAIT_OPTION = re.compile(r"SetAbilitySearch\('([^']+)', 'strTrait1'\)")
+DAILY_ROW = re.compile(r'<div class="tr">(.*?)(?=<div class="tr">|\Z)', re.S)
+DAILY_SPID_OVR = re.compile(r'<span class="skillData_(\d+)">\s*(\d+)')
+DAILY_GRADE = re.compile(r'en_level(\d+)')
+DAILY_POSITION = re.compile(r'<span class="position \w+"><span class="txt">(\w+)</span>')
+DAILY_PAY = re.compile(r'<span class="pay">\s*(\d+)\s*</span>')
+DAILY_CELL = re.compile(r'<div class="td (p_\w+)[^"]*">(.*?)</div>', re.S)
+NUMBER = re.compile(r"[\d,]+(?:\.\d+)?")
+FORMATION_ITEM = re.compile(r'formation_list__item.*?<div class="txt">\s*([^<]+?)\s*</div>.*?([\d,]+)명\s*\(([\d.]+)%\)', re.S)
 NATION_OPTION = re.compile(r"SetAbilitySearch\('(\d+)', 'n4NationId'\);[^>]*>(?:<[^>]+>)*([^<]+)")
 TEAMCOLOR_ITEM = re.compile(r'GetTeamColorDetail\((\d+)\).*?<div class="crests [^"]*">\s*<img src="([^"]*)".*?'
                             r'<div class="num">(\d+)</div>.*?<div class="name">([^<]+)</div>\s*<div class="level">([^<]*)</div>\s*'
@@ -258,6 +285,63 @@ def parse_usage(text: str) -> list[dict]:
             "users": int(users.replace(",", "")), "share": float(share),
         })
     return rows
+
+
+def parse_search_options(text: str) -> dict:
+    """선수 검색 화면 → 검색에 쓸 목록 — {"teams": {클럽: 번호}, "nations": {국적: 번호}, "leagues": {리그: 번호},
+    "team_league": {클럽 번호: 리그 번호}, "traits": [보유 특성 이름 48개]}. 조건 검색 · AI 찾기가 이름을 번호로 바꾼다."""
+    base = parse_teams(text)
+    leagues = {html.unescape(label).strip(): int(no) for no, label in LEAGUE_OPTION.findall(text) if no != "0"}
+    team_league = {int(team): int(league) for league, team in TEAM_LEAGUE.findall(text)}
+    traits = list(dict.fromkeys(html.unescape(t) for t in TRAIT_OPTION.findall(text)))
+    return {**base, "leagues": leagues, "team_league": team_league, "traits": traits}
+
+
+def _numbers(cell: str) -> list[float]:
+    return [float(n.replace(",", "")) for n in NUMBER.findall(re.sub(r"<[^>]+>", " ", cell))]
+
+
+def parse_daily_stats(text: str) -> list[dict]:
+    """데일리 기록(선수 기록 TOP) → [{spid, name, season_code, grade, position, ovr, pay, matches, stats{정렬 기준: 값}}].
+    경기당 칸은 평균(합계는 stats[기준 + '_total']), 성공률 칸은 %(시도는 stats[기준 + '_try'])."""
+    rows = []
+    for block in DAILY_ROW.findall(text):
+        name, card = NAME.search(block), DAILY_SPID_OVR.search(block)
+        if not name or not card:
+            continue
+        grade, position, pay, season = (DAILY_GRADE.search(block), DAILY_POSITION.search(block), DAILY_PAY.search(block),
+                                        SEASON_IMG.search(block))
+        stats: dict[str, float] = {}
+        for css, cell in DAILY_CELL.findall(block):
+            key = DAILY_CELLS.get(css)
+            values = _numbers(cell)
+            if not key or not values:
+                continue
+            stats[key] = values[0]
+            if key in ("PASS", "DRIBBLE", "AERIAL", "TACKLE", "BLOCK") and len(values) >= 3:
+                stats[key + "_try"] = values[2]
+            elif len(values) >= 2:
+                stats[key + "_total"] = values[1]
+        rows.append({"spid": int(card.group(1)), "name": html.unescape(name.group(1)), "ovr": int(card.group(2)),
+                     "season_code": season.group(1) if season else "", "grade": int(grade.group(1)) if grade else None,
+                     "position": position.group(1) if position else "", "pay": int(pay.group(1)) if pay else None,
+                     "matches": int(stats.get("MATCHCOUNT", 0)), "stats": stats})
+    return rows
+
+
+def parse_formations(text: str) -> list[dict]:
+    """데일리 차트 포메이션 이용률 → [{formation, users, share}] (이용률 높은 순)."""
+    return [{"formation": html.unescape(name), "users": int(users.replace(",", "")), "share": float(share)}
+            for name, users, share in FORMATION_ITEM.findall(text)]
+
+
+def daily_date(now=None, back: int = 0) -> str:
+    """데일리 차트 날짜 — 매일 12시에 전날 기록이 올라온다. 12시 전이면 그저께. back 만큼 더 앞으로 ('2026.10.21')."""
+    from datetime import datetime, timedelta
+
+    now = now or datetime.now()
+    day = now.date() - timedelta(days=1 if now.hour >= 12 else 2) - timedelta(days=back)
+    return day.strftime("%Y.%m.%d")
 
 
 def parse_teams(text: str) -> dict[str, dict[str, int]]:
@@ -434,10 +518,15 @@ class DatacenterClient:
                     team_id: int | None = None, nation_id: int | None = None, teamcolor_id: int | None = None,
                     order: str = "ovr", ovr_min: int | None = None, ovr_max: int | None = None,
                     price_max: int | None = None, skills: tuple[str, ...] = (),
-                    height: tuple[int, int] | None = None, weight: tuple[int, int] | None = None) -> list[dict]:
+                    height: tuple[int, int] | None = None, weight: tuple[int, int] | None = None,
+                    league_id: int | None = None, club_history: bool = True, traits: tuple[str, ...] = (),
+                    foot: int | None = None, weak_foot: int | None = None, skill_moves: int | None = None,
+                    reputation: int | None = None, pay_min: int | None = None, pay_max: int | None = None) -> list[dict]:
         """선수 검색 (한 번에 최대 200장). 이름만 주면 그 이름이 들어간 선수의 카드 전부. teamcolor_id 면 그 팀컬러가
         적용되는 카드만. skills 는 같이 받을 능력치 칸(STAT_CODES 중 최대 4개). price_max 는 +1 강화 가격 상한(BP).
-        height · weight = (최소, 최대) cm · kg — 같은 OVR 이 200장을 넘을 때 더 잘게 나눠 묻는 데 쓴다."""
+        height · weight = (최소, 최대) cm · kg — 같은 OVR 이 200장을 넘을 때 더 잘게 나눠 묻는 데 쓴다.
+        조건 검색: league_id · team_id(club_history=True 면 클럽 경력까지) · nation_id · traits(보유 특성 이름 최대 3개) ·
+        foot(FOOT: 1 오른발 · 2 왼발) · weak_foot(약발 1~5) · skill_moves(개인기 별 1~6) · reputation(명성 1~5) · 급여."""
         form = dict.fromkeys(LIST_FIELDS, "")
         form.update({"strPlayerName": name, "n4PageNo": "1", "strOrderby": ORDER_BY.get(order, "")})
         form.update({f"strSkill{i}": code for i, code in enumerate(skills[:4], start=1)})
@@ -460,6 +549,11 @@ class DatacenterClient:
         for field, bounds in (("Height", height), ("Weight", weight)):
             if bounds:
                 form[f"n4{field}Min"], form[f"n4{field}Max"] = str(bounds[0]), str(bounds[1])
+        form["n1History"] = "0" if club_history else "1"   # 0 = 클럽 경력까지 (화면의 '클럽 경력' 체크)
+        extra = {"n4LeagueId": league_id, "preferredfoot": foot, "n1FootAblity": weak_foot, "n1SkillMove": skill_moves,
+                 "n1InterationalRep": reputation, "n4SalaryMin": pay_min, "n4SalaryMax": pay_max}
+        form.update({key: str(value) for key, value in extra.items() if value})
+        form.update({f"strTrait{i}": trait for i, trait in enumerate(traits[:3], start=1)})
         return parse_player_list(self._post(LIST_PATH, form), skills[:4])
 
     def price(self, spid: int, grade: int) -> dict | None:
@@ -489,6 +583,22 @@ class DatacenterClient:
 
     def teams(self) -> dict[str, dict[str, int]]:
         return parse_teams(self._post(SEARCH_PAGE, {}, method="GET"))
+
+    def search_options(self) -> dict:
+        return parse_search_options(self._post(SEARCH_PAGE, {}, method="GET"))
+
+    def daily_stats(self, order: str = "ATTACKPOINT", mode: str = "official", day: str | None = None,
+                    ranks: tuple[int, int] = (1, 10000)) -> list[dict]:
+        """데일리 기록 — 그날 랭커가 쓴 카드의 기록 TOP 18 (order = DAILY_STATS 의 키)."""
+        return parse_daily_stats(self._post(DAILY_STAT_PATH, {"strDate": day or daily_date(), "strOrderBy": order,
+                                                              "n1Type": MODES[mode], "n4StartRanking": ranks[0],
+                                                              "n4EndRanking": ranks[1]}, method="GET"))
+
+    def formations(self, mode: str = "official", day: str | None = None) -> list[dict]:
+        """데일리 차트 — 랭커 포메이션 이용률 (상위 10개)."""
+        return parse_formations(self._post(FORMATION_PATH, {"strDate": day or daily_date(), "strType": "usage",
+                                                            "n1Type": MODES[mode], "n4StartRanking": 1,
+                                                            "n4EndRanking": 10000}, method="GET"))
 
     def teamcolors(self) -> list[dict]:
         return parse_teamcolors(self._post(TEAMCOLOR_PAGE, {}, method="GET"))

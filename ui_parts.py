@@ -142,9 +142,13 @@ button[data-testid="stBaseButton-primary"] {{ box-shadow: 0 4px 14px rgba(22,224
 button[data-variant="pills"][aria-checked="true"] {{ font-weight: 700; }}
 /* 글자 버튼(상단 메뉴 · 추천 검색어) — 올리면 옅은 면, 추천 검색어는 칩 모양으로 */
 button[data-testid="stBaseButton-tertiary"]:hover {{ background: rgba(127,127,127,.12); }}
-.st-key-wrap_chips button[data-testid="stBaseButton-tertiary"] {{ background: {t['raise']}; border: 1px solid {t['edge']};
-  border-radius: 999px; padding: 4px 12px; }}
-.st-key-wrap_chips button[data-testid="stBaseButton-tertiary"]:hover {{ border-color: {ACCENT}; }}
+.st-key-chipbar button[data-testid="stBaseButton-tertiary"] {{ background: {t['raise']}; border: 1px solid {t['edge']};
+  border-radius: 999px; padding: 4px 12px; max-width: 100%; }}
+.st-key-chipbar button[data-testid="stBaseButton-tertiary"]:hover {{ border-color: {ACCENT}; }}
+/* 칩 글자가 길어 줄을 바꿀 때 — 단어 단위로 끊고, 둘째 줄은 💡 뒤 글자 시작에 맞춘다 (내어쓰기) */
+.st-key-chipbar button p {{ word-break: keep-all; overflow-wrap: anywhere; text-align: left; padding-left: 1.45em;
+  text-indent: -1.45em; line-height: 1.35; }}
+.fc-chip.lead {{ background: {ACCENT}; color: #0b1426; font-weight: 800; }}
 
 /* 상단 메뉴 — 넓은 화면은 한 줄 고정, 900px 이하에서만 줄바꿈 (모바일에서도 세로로 길게 쌓이지 않게) */
 .st-key-navbar [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap; gap: .35rem; }}
@@ -195,6 +199,9 @@ div[class*="st-key-slide_prev_"] {{ animation: fc-from-left .38s ease-out; }}
 .fc-line {{ display: flex; align-items: center; gap: 12px; min-height: 52px; }}
 .fc-line img {{ width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: #0b1426; }}
 .fc-line .rk {{ width: 30px; text-align: center; font-weight: 900; font-size: 16px; color: {ACCENT}; }}
+/* 데일리 랭킹 줄 — 동그란 얼굴 대신 시즌 카드 그림 (OVR · 포지션 · 급여 · 강화) */
+.fc-line.daily .cv {{ flex: 0 0 64px; width: 64px; }}
+.fc-line .fc-cv img {{ width: auto; height: auto; border-radius: 0; background: none; object-fit: contain; }}
 .fc-line .nm {{ font-weight: 800; }}
 .fc-line .sb {{ font-size: 12px; color: {t['muted']}; }}
 .fc-line .st {{ font-size: 12.5px; color: {t['ink2']}; }}
@@ -387,6 +394,13 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-abil .it.focus {{ color: {ACCENT}; font-weight: 800; background: rgba(22,224,138,.10); border-radius: 6px;
   padding: 2px 6px; margin: 0 -6px; }}
 @media (max-width: 760px) {{ .fc-abil {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
+/* 문서에 없어 AI 일반 지식으로 답한 부분 */
+.fc-general {{ margin-top: 10px; padding: 10px 14px; border: 1px solid #f2c94c; border-radius: 12px; background: rgba(242,201,76,.08);
+  font-size: 14px; color: {t['ink']}; line-height: 1.6; }}
+.fc-general .tag {{ font-size: 12px; font-weight: 800; color: #f2c94c; margin-bottom: 4px; }}
+.fc-general small {{ display: block; margin-top: 6px; font-size: 11.5px; color: {t['muted']}; }}
+/* 짝 추천 */
+.fc-pair {{ font-size: 13.5px; color: {t['ink2']}; margin: 2px 0 8px; }}
 /* 강화 시뮬 — 큰 카드 · 등급 칸 · 확률 · 게이지 칸 · 기록 표 (공식 강화 시뮬레이터처럼 가운데 정렬) */
 .fc-growcard {{ width: min(250px, 100%); margin: 4px auto 0; }}
 .fc-growbd {{ text-align: center; margin: 6px 0 4px; }}
@@ -419,6 +433,39 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-growrec th {{ font-weight: 800; }}
 .fc-growrec small {{ color: {t['muted']}; }}
 div.st-key-gr_actions button p, div[class*="st-key-again_"] button p {{ white-space: nowrap; }}
+/* 강화 연출 — 카드 아래 양옆에서 성공은 금빛 불꽃(크리티컬은 보라빛 · 더 크게), 실패는 회색 연기 + 카드 흔들림 */
+.fc-growstage {{ position: relative; width: min(250px, 100%); margin: 4px auto 0; }}
+.fc-growstage .fx {{ position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: visible; }}
+.fc-growstage .fx i {{ position: absolute; bottom: 14%; opacity: 0; border-radius: 50%; }}
+.fc-growstage .fx i.l {{ left: 8%; }} .fc-growstage .fx i.r {{ right: 8%; }}
+.fc-growstage .fx.ok i, .fc-growstage .fx.crit i {{ width: 10px; height: 10px;
+  background: radial-gradient(circle, #fffbe0 0%, #ffd34d 45%, #ff8a00 100%); box-shadow: 0 0 10px 3px rgba(255,190,60,.85);
+  animation: fc-spark 1.15s cubic-bezier(.15,.7,.3,1) forwards; }}
+.fc-growstage .fx.crit i {{ width: 12px; height: 12px; background: radial-gradient(circle, #fff 0%, #e6b3ff 45%, #9b4dff 100%);
+  box-shadow: 0 0 12px 4px rgba(180,110,255,.9); }}
+.fc-growstage .fx.fail i {{ width: 46px; height: 46px; filter: blur(3px);
+  background: radial-gradient(circle, rgba(205,208,214,.9) 0%, rgba(140,145,155,.6) 45%, rgba(90,95,105,0) 72%);
+  animation: fc-smoke 1.7s ease-out forwards; }}
+.fc-growstage.ok .pc, .fc-growstage.crit .pc {{ animation: fc-glow 1.2s ease-out; }}
+.fc-growstage.fail .pc {{ animation: fc-shake .5s ease-in-out; }}
+.fc-growstage .fxlabel {{ position: absolute; left: 50%; top: 64%; transform: translate(-50%, -50%); z-index: 4; font-size: 26px;
+  font-weight: 900; letter-spacing: .06em; opacity: 0; pointer-events: none; animation: fc-label 1.3s ease-out forwards;
+  text-shadow: 0 2px 6px rgba(0,0,0,.8); }}
+.fc-growstage .fxlabel.ok {{ color: #ffd34d; }} .fc-growstage .fxlabel.crit {{ color: #d9a6ff; }}
+.fc-growstage .fxlabel.fail {{ color: #c9ced8; }}
+@keyframes fc-spark {{ 0% {{ opacity: 1; transform: translate(0, 0) scale(1); }} 75% {{ opacity: 1; }}
+  100% {{ opacity: 0; transform: translate(var(--dx), var(--dy)) scale(.3); }} }}
+@keyframes fc-smoke {{ 0% {{ opacity: .95; transform: translate(0, 0) scale(.3); }}
+  100% {{ opacity: 0; transform: translate(var(--dx), var(--dy)) scale(calc(var(--s) * 2.4)); }} }}
+@keyframes fc-glow {{ 0% {{ filter: drop-shadow(0 0 0 rgba(255,210,80,0)); }} 30% {{ filter: drop-shadow(0 0 18px rgba(255,210,80,.95)); }}
+  100% {{ filter: drop-shadow(0 0 0 rgba(255,210,80,0)); }} }}
+@keyframes fc-shake {{ 0%, 100% {{ transform: translateX(0); filter: none; }} 20% {{ transform: translateX(-6px); filter: grayscale(.6); }}
+  40% {{ transform: translateX(6px); }} 60% {{ transform: translateX(-4px); }} 80% {{ transform: translateX(3px); }} }}
+@keyframes fc-label {{ 0% {{ opacity: 0; transform: translate(-50%, -30%) scale(.7); }} 25% {{ opacity: 1; transform: translate(-50%, -50%) scale(1.08); }}
+  70% {{ opacity: 1; }} 100% {{ opacity: 0; transform: translate(-50%, -70%) scale(1); }} }}
+@media (prefers-reduced-motion: reduce) {{ .fc-growstage .fx, .fc-growstage .fxlabel {{ display: none; }}
+  .fc-growstage .pc {{ animation: none !important; }} }}
+.fc-growrec.steps td:first-child {{ font-weight: 800; }}
 /* 비교: 두 카드 능력치 나란히 — A(파랑)는 가운데에서 왼쪽으로, B(주황)는 오른쪽으로 막대, 높은 쪽 숫자에 색과 차이 */
 .fc-abcmp {{ border: 1px solid {t['border']}; border-radius: 14px; padding: 10px 14px; background: {t['surface']}; }}
 .fc-abcmp .hd, .fc-abcmp .r {{ display: grid; grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr); align-items: center;
@@ -702,7 +749,7 @@ def grow_board(grade: int, rate: float, boost: float, official: float, critical:
     banner = ""
     if last:
         text = {"성공": "✅ 성공", "크리티컬": "💥 크리티컬 (+2)", "실패": "❌ 실패"}[last["outcome"]]
-        moved = f"+{last['from']} → +{last['to']}" + (" · 등급 고정이라 그대로" if locked and last["to"] != last["from"] else "")
+        moved = f"+{last['from']} → +{last['to']}" + (" · 등급 보호로 그대로" if locked and last["outcome"] == "실패" else "")
         banner = f'<div class="last {last["outcome"]}">{text} <small>{moved}</small></div>'
     if grade >= MAX_GRADE:
         steps = f'<span class="gbox {grade_tier(grade)}">{grade}</span>'
@@ -715,6 +762,53 @@ def grow_board(grade: int, rate: float, boost: float, official: float, critical:
             f'<div class="rate">강화 확률 <b>{rate:.2f}</b>%</div>'
             f'<div class="cnt"><b>{boost / 20:g}</b>칸 <small>게이지 {boost:.0f}% · 공식 {official:g}%{crit}</small></div>'
             f'<div class="gauge">{cells}</div></div>')
+
+
+FX_SPARKS = ((-20, -150), (10, -175), (35, -130), (-45, -105), (60, -160), (20, -90), (-5, -200), (75, -115), (-30, -60),
+             (50, -70), (5, -125), (90, -140))   # 불꽃 하나하나가 날아갈 (가로, 세로) px — 왼쪽은 가로를 뒤집는다
+FX_SMOKE = ((-10, -40, 1.0), (25, -70, 1.25), (-35, -95, 1.45), (15, -120, 1.15), (45, -35, 1.3), (-50, -60, 1.1))
+
+
+def grow_stage(card: str, fx: dict | None) -> str:
+    """강화 시뮬의 카드 + 방금 강화한 결과 연출 — 카드 아래 양옆에서 성공은 불꽃(크리티컬은 더 크게), 실패는 연기가 터진다.
+    fx = {"n": 몇 번째 시도, "outcome"} — n 이 바뀔 때마다 새 HTML 이라 연출이 다시 재생된다."""
+    if not fx:
+        return f'<div class="fc-growstage">{card}</div>'
+    outcome, n = fx["outcome"], fx["n"]
+    parts = []
+    if outcome == "실패":
+        for side in ("l", "r"):
+            for i, (dx, dy, scale) in enumerate(FX_SMOKE):
+                x = dx if side == "r" else -dx
+                parts.append(f'<i class="{side}" style="--dx:{x}px;--dy:{dy}px;--s:{scale};animation-delay:{i * 0.06:.2f}s"></i>')
+        kind = "fail"
+    else:
+        big = 1.35 if outcome == "크리티컬" else 1.0
+        for side in ("l", "r"):
+            for i, (dx, dy) in enumerate(FX_SPARKS):
+                x = dx * big if side == "r" else -dx * big
+                parts.append(f'<i class="{side}" style="--dx:{x:.0f}px;--dy:{dy * big:.0f}px;animation-delay:{(i % 4) * 0.07:.2f}s">'
+                             "</i>")
+        kind = "crit" if outcome == "크리티컬" else "ok"
+    label = {"성공": "SUCCESS", "크리티컬": "CRITICAL +2", "실패": "FAIL"}[outcome]
+    return (f'<div class="fc-growstage {kind}" data-try="{n}">{card}<div class="fx {kind}" aria-hidden="true">{"".join(parts)}'
+            f'</div><div class="fxlabel {kind}">{label}</div></div>')
+
+
+def grow_steps(steps: dict, boost: float) -> str:
+    """단계별 기록 — 단계(+N → +N+1)마다 시도 · 성공 · 실패 · 성공 비율과 이론 확률(공식 확률 × 게이지).
+    전체 성공 비율은 쉬운 단계(+1 → +2 100% 등)가 섞여 높게 보이므로 단계마다 따로 본다."""
+    from data_prep.enhance import success_rate   # ui_parts 는 화면 부품만 — 확률은 여기서만 빌린다
+
+    rows = []
+    for grade in sorted(steps, key=int):
+        s = steps[grade]
+        g = int(grade)
+        succ = s["ok"] + s["crit"]
+        rows.append(f'<tr><td>+{g} → +{g + 1}</td><td>{s["tries"]:,}</td><td>{succ:,}</td><td>{s["fail"]:,}</td>'
+                    f'<td><b>{succ / s["tries"] * 100:.1f}%</b></td><td>{success_rate(g, boost):.2f}%</td></tr>')
+    return ('<table class="fc-growrec steps"><thead><tr><th>단계</th><th>시도</th><th>성공</th><th>실패</th><th>성공 비율</th>'
+            '<th>이론 확률</th></tr></thead><tbody>' + "".join(rows) + "</tbody></table>")
 
 
 def grow_record(tries: int, ok: int, crit: int, fail: int) -> str:
@@ -981,6 +1075,14 @@ def chips(items: list[tuple[str, str]]) -> str:
 
 def ai_box(text_html: str, tag: str = "AI 스카우팅") -> str:
     return f'<div class="fc-ai"><span class="tag">🤖 {escape(tag)}</span>{text_html}</div>'
+
+
+def general_box(text: str) -> str:
+    """문서에 없어 LLM 일반 지식으로 답한 부분 — 근거 문서가 없다는 것을 분명히 (노란 테두리)."""
+    body = escape(text).replace("\n", "<br>")
+    return (f'<div class="fc-general"><div class="tag">📖 문서에 없는 부분 — AI 일반 지식 (LLM)</div>{body}'
+            '<small>수집한 위키백과 · 넥슨 데이터에서 확인되지 않아 AI가 알고 있는 지식으로 답했습니다. 근거 문서가 없으니 '
+            '사실과 다를 수 있습니다.</small></div>')
 
 
 INTRO_FOLD = 300   # 소개가 이 글자 수보다 길면 다섯 줄쯤에서 접는다

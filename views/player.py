@@ -15,19 +15,26 @@ import streamlit as st
 import ui_parts
 from data_prep.enhance import skill_stars
 from data_prep.prompts import TASK_LABELS
-from services.ai import scout_line
+from services.ai import general_answer, scout_line
+from services.partners import pair_plan, recommend, solo_share, solo_text, SOLO_SHARE
 from services.cardinfo import bonus_stats
 from services.insights import percentiles, position_usage, trade_prices
 from services.teamcolor import effect_bonus, enhance_details
 from data_prep.tactics import OVR_GRID
-from views.common import (Ctx, add_to_compare, back_button, by_ovr, card_basics, dialog_open, enrich, friendly_error, get_player,
-                          log, render_sources, run_with_status, tile_grid, with_saves)
+from views.common import (Ctx, add_to_compare, back_button, by_ovr, card_basics, daily_wait, dialog_open, enrich, friendly_error,
+                          get_player, log, render_sources, run_with_status, tile_grid, with_saves)
 from views.prices import compare_prices, price_section
 from views.widgets import card_picker, grade_buttons
 
 SAMPLES = ["프로 데뷔는 언제, 어느 팀에서 했어?", "국가대표 경력을 알려 줘", "가장 큰 우승 경력은?", "어떤 플레이 스타일이야?"]
 OTHER_PAGE = 12   # 다른 시즌 카드 한 번에 (2줄 × 6장)
 ADAPT_LEVELS = [1, 5]   # 적응도 — 지금 게임에는 1 · 5 두 단계뿐 (2 · 3 · 4 는 없어졌다). 5 = 모든 능력치 +4
+NOT_IN_DOCS = "문서에서 확인되지 않습니다"   # 프롬프트 3 이 근거에 없는 부분에 쓰는 말 — 이 말이 있으면 일반 지식 답을 덧붙인다
+
+
+def restriction_text(season: str) -> str:
+    """생성 제한 — 시즌 이름에 '(제한)'이 붙은 카드(ICON TM(제한) = ICON The Moment Bound, 귀속 카드)."""
+    return "있음 · 귀속 카드" if "(제한)" in season or "Bound" in season else "없음"
 
 
 def _ask(question: str) -> None:
@@ -55,6 +62,44 @@ def _card_section(ctx: Ctx, player: dict) -> None:
         st.caption("데이터센터 기능이 꺼져 있어 카드 정보를 볼 수 없습니다 (settings.toml [market] enabled).")
 
 
+def _partner_section(ctx: Ctx, player: dict) -> None:
+    """🤝 짝 추천 — 이 카드를 자기 포지션에 쓸 때 옆(가운데 자리) · 반대쪽(측면)에 둘 카드. 골키퍼는 한 명이라 없다.
+    랭커가 그 자리에 많이 쓰는 카드(데일리 차트) 중 이 카드의 약한 능력치를 메워 주는 카드, 혼자 쓰는 자리면 그렇다고 적는다."""
+    info = ctx.cards.get([player["spid"]]).get(player["spid"]) or {}
+    basics = card_basics(ctx, [player["spid"]]).get(player["spid"], {})
+    position = info.get("position") or basics.get("position") or next(iter(player.get("positions") or []), None)
+    plan = pair_plan(position)
+    if plan is None or not ctx.daily.enabled:
+        return
+    where = f"반대쪽 {plan['partner']}" if plan["kind"] == "mirror" else f"같은 자리({plan['group']})의 다른 한 명"
+    st.markdown(f'<div class="fc-section">🤝 짝 추천 — {escape(position)} 에 쓸 때<small>{escape(where)} · 랭커가 많이 쓰는 카드 중 '
+                '이 카드의 약한 능력치를 메워 주는 카드 · FC 온라인 데이터센터 데일리 차트</small></div>', unsafe_allow_html=True)
+    usage = ctx.daily.usage(plan["partner"])
+    forms = ctx.daily.formations() if plan["kind"] == "central" else {"rows": []}
+    if usage is None or forms is None:
+        if ctx.daily.pending():
+            daily_wait(ctx)
+        else:
+            st.caption("데일리 차트를 불러오지 못했습니다. 잠시 뒤 다시 열어 주세요.")
+        return
+    if plan["kind"] == "central":
+        share, names = solo_share(plan["group"], forms["rows"])
+        if share is not None and share >= SOLO_SHARE:
+            st.markdown(f'<div class="fc-pair">{solo_text(escape(player["name"]), plan["group"], share, names)}</div>',
+                        unsafe_allow_html=True)
+        elif share is not None:
+            st.caption(f"랭커 포메이션의 {(1 - share) * 100:.0f}% 가 {plan['group']}을(를) 두 명 이상 세웁니다 — 짝이 있으면 좋은 자리입니다.")
+    rows = usage["rows"]
+    picks = recommend({"spid": player["spid"], "pid": player["pid"]}, info, plan, rows,
+                      ctx.db.card_stats([r["spid"] for r in rows] + [player["spid"]]))
+    if not picks:
+        st.caption("짝으로 볼 만한 카드가 없습니다 (그 자리에 랭커가 많이 쓴 카드가 이 선수의 카드뿐).")
+        return
+    shown = [get_player(ctx, str(p["spid"])) for p in picks]
+    tile_grid(ctx, shown, key="pair", cols=3, reasons={s["player_id"]: p["reason"] for s, p in zip(shown, picks)})
+    st.caption(f"데일리 차트 {usage['date']} · 능력치는 모은 능력치(+1강) 기준 — 아직 모으지 못한 카드는 랭커 이용 비율로만 고릅니다.")
+
+
 @st.fragment(run_every=2)
 def _card_waiting(ctx: Ctx, player: dict) -> None:
     """받는 동안 2초마다 확인 — 다 받으면 화면 전체를 한 번 다시 그린다 (머리의 카드 OVR 까지)."""
@@ -64,9 +109,16 @@ def _card_waiting(ctx: Ctx, player: dict) -> None:
 
 
 def _reset_bonus(spid: int) -> None:
-    """추가 능력치 선택을 처음으로 (+1강 · 적응도 1 · 팀컬러 없음)."""
-    for key in [k for k in st.session_state if str(k).startswith("pc_") and f"_{spid}" in str(k)]:
-        del st.session_state[key]
+    """추가 능력치 선택을 처음으로 (+1강 · 적응도 1 · 팀컬러 없음).
+
+    선택 칸의 키를 지우기만 하면 서버 값은 비지만 브라우저의 선택 칸은 예전 값을 그대로 보여 주고 다음에 다시 보낸다
+    (소속 팀컬러가 초기화되지 않던 것). 그래서 처음 값을 직접 넣는다 — 그래야 화면의 선택 칸도 바뀐다."""
+    for key in [k for k in st.session_state if str(k).startswith(("pc_enh_", "pc_tclv_")) and f"_{spid}_" in str(k)]:
+        del st.session_state[key]   # 강화 · 단계마다 따로 있는 칸 — 처음 값이 '없음' · 최고 단계라 새 칸으로 둔다
+    st.session_state[f"pc_grade_{spid}"] = 1
+    st.session_state[f"pc_adapt_{spid}"] = ADAPT_LEVELS[0]
+    st.session_state[f"pc_tc_{spid}"] = None
+    st.session_state[f"pc_rel_{spid}"] = None
 
 
 def bonus_controls(ctx: Ctx, player: dict, info: dict, compact: bool = False) -> dict:
@@ -354,6 +406,7 @@ def render(ctx: Ctx) -> None:
             ("랭커 주 포지션", ", ".join(player["positions"]) or ("불러오는 중" if player.get("lite") else "기록 없음")),
             ("포지션 그룹", player.get("position_group") or "-"),
             ("이 선수 카드", f"{player['card_count']}장"),
+            ("생성 제한", restriction_text(player.get("season", ""))),
             ("랭커 집계", ranker.get("date", "-")),
         ]), unsafe_allow_html=True)
         ai_slot = st.empty()
@@ -386,14 +439,17 @@ def render(ctx: Ctx) -> None:
     with qa_tab:
         history = st.session_state.chats.setdefault(player["player_id"], [])
         if not history:
-            st.caption("커리어 · 이적 · 대표팀 · 우승 · 플레이 스타일을 물어보세요. 위키백과와 넥슨 데이터에 있는 것만 근거와 함께 답합니다.")
-            for col, sample in zip(st.columns(len(SAMPLES)), SAMPLES):
-                col.button(sample, key=f"sample_{sample}", on_click=_ask, args=(sample,), width="stretch")
+            st.caption("커리어 · 이적 · 대표팀 · 우승 · 플레이 스타일을 물어보세요. 위키백과와 넥슨 데이터에 있는 것으로 근거와 함께 "
+                       "답하고, 문서에 없으면 AI 일반 지식 답을 따로 표시해 보여 줍니다.")
+        for col, sample in zip(st.columns(len(SAMPLES)), SAMPLES):   # 추천 질문은 대화가 이어져도 늘 (Q&A 탭에만)
+            col.button(sample, key=f"sample_{sample}", on_click=_ask, args=(sample,), width="stretch")
         for message in history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
                 if message["role"] == "assistant":
                     render_sources(message["content"], message.get("evidence", []))
+                    if message.get("general"):
+                        st.markdown(ui_parts.general_box(message["general"]), unsafe_allow_html=True)
         typed = st.chat_input(f"{player['name']} 선수에 대해 물어보세요", key="qa_input")
         question = typed or st.session_state.pending_question
         st.session_state.pending_question = None
@@ -412,6 +468,7 @@ def render(ctx: Ctx) -> None:
         report_slot = st.container()
 
     _card_section(ctx, player)
+    _partner_section(ctx, player)
 
     # ── 스탯 · 포지션 사용 ─────────────────────────────────────────
     meter_col, usage_col = st.columns(2, gap="medium")
@@ -485,13 +542,23 @@ def render(ctx: Ctx) -> None:
 
     # ── 그다음: 질문 답변 · AI 리포트 생성 (가장 느리다 — 화면을 다 그린 뒤 위의 탭 자리에) ──
     if question:
+        general = None
         with answer_slot:
             reply = run_with_status(ctx, "qa", [player], question)
             if reply:
                 st.markdown(reply["answer"])
                 render_sources(reply["answer"], reply["evidence"])
+                if NOT_IN_DOCS in reply["answer"]:   # 문서에 없는 부분 — LLM 일반 지식으로 (근거 없음을 분명히 표시)
+                    try:
+                        with st.spinner("문서에 없는 부분을 AI 일반 지식으로 찾는 중… (LLM)"):
+                            general = general_answer(player, question, ctx.model)
+                    except Exception as exc:  # noqa: BLE001 — 문서 기반 답은 이미 보였다
+                        log.exception("일반 지식 답변 실패")
+                        st.caption(friendly_error(exc))
+                    if general:
+                        st.markdown(ui_parts.general_box(general), unsafe_allow_html=True)
         if reply:
-            history.append({"role": "assistant", "content": reply["answer"], "evidence": reply["evidence"]})
+            history.append({"role": "assistant", "content": reply["answer"], "evidence": reply["evidence"], "general": general})
 
     with report_slot:
         if make_report:

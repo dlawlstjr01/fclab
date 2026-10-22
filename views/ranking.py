@@ -1,6 +1,9 @@
-"""🏆 파워 랭킹 — 공식경기 랭커가 쓴 카드의 경기당 기록으로 포지션별 순위. (bstpg 의 파워 랭킹을 넥슨 데이터로)
+"""🏆 파워 랭킹 — 랭커가 쓴 카드의 기록 순위.
 
-랭커 스탯은 '그 카드를 그 포지션에 쓴 최근 최대 20경기의 평균'이다. 사용률(몇 명이 쓰나)은 Open API 에 없다.
+- 📅 데일리 (기본): FC 온라인 데이터센터 데일리 기록 — 어제 공식 경기(또는 감독 모드) 랭커 상위 1만 명이 실제로 쓴 카드의
+  출전 · 공격 포인트 · 득점 · 도움 · 패스 · 드리블 · 태클 · 평점 … 기록마다 TOP 18. 시즌 · 강화 · 포지션 OVR · 급여 · 선수
+  이미지와 함께 (https://fconline.nexon.com/datacenter/dailyrecord 의 '선수 기록'). 지금 쓰이는 카드가 나온다.
+- 📊 랭커 분석 카드 (넥슨 Open API): 분석해 둔 카드의 '그 포지션 최근 최대 20경기 평균' — 예전 기준 (수집 시점의 카드).
 """
 
 from __future__ import annotations
@@ -10,10 +13,101 @@ from html import escape
 import streamlit as st
 
 import ui_parts
+from data_prep.datacenter import DAILY_STATS, MODES
 from data_prep.players import POSITION_GROUPS, SORT_LABELS, SORT_STATS, STATS
 from services.insights import leaderboard
-from views.common import Ctx, open_player, tile_grid, with_saves
+from views.common import Ctx, daily_wait, get_player, open_player, tile_grid, with_saves
 from views.players import SAVE_NOTE
+
+RATE_STATS = ("PASS", "DRIBBLE", "AERIAL", "TACKLE", "BLOCK")   # 성공률(%) 칸
+SHOWN_STATS = ("MATCHCOUNT", "ATTACKPOINT", "GOAL", "ASSIST", "PASS", "DRIBBLE", "TACKLE", "INTERCEPT", "RATING")
+LINES = {"전체": None, "공격수": {"ST", "CF", "LW", "RW", "LS", "RS", "LF", "RF"},
+         "미드필더": {"CAM", "CM", "CDM", "LM", "RM", "LAM", "RAM", "LCM", "RCM", "LDM", "RDM"},
+         "수비수": {"CB", "LB", "RB", "LWB", "RWB", "SW", "LCB", "RCB"}, "골키퍼": {"GK"}}
+MODE_LABELS = {"official": "공식 경기 1 ON 1", "manager": "감독 모드"}
+
+
+def daily_value(key: str, stats: dict) -> str:
+    """데일리 기록 한 칸 — 성공률은 %(시도), 경기당은 평균(합계), 출전은 경기, 평점은 그대로."""
+    value = stats.get(key)
+    if value is None:
+        return "-"
+    if key == "MATCHCOUNT":
+        return f"{value:,.0f}경기"
+    if key in RATE_STATS:
+        tries = stats.get(key + "_try")
+        return f"{value:.1f}%" + (f" ({tries:,.0f}회)" if tries else "")
+    if key == "RATING":
+        return f"{value:.1f}"
+    total = stats.get(key + "_total")
+    return f"{value:.1f}" + (f" ({total:,.0f})" if total is not None else "")
+
+
+def _daily_board(ctx: Ctx) -> None:
+    """데일리 기록 TOP — 기록 · 모드 · 구분(현역 · 레전드) · 줄(공격 · 미드 · 수비 · 골키퍼)을 골라 본다."""
+    o_col, m_col, k_col, l_col = st.container(key="wrap_dailyfilters").columns([2, 1.6, 1.2, 3])
+    names = {label: key for key, label in DAILY_STATS.items()}
+    label = o_col.selectbox("기록", list(names), key="daily_order")
+    mode = m_col.segmented_control("모드", list(MODE_LABELS), default="official", key="daily_mode",
+                                   format_func=MODE_LABELS.get) or "official"
+    kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="daily_kind",
+                           help="레전드 = 아이콘 카드가 있는 선수의 모든 시즌 카드")
+    line = l_col.pills("줄", list(LINES), default="전체", key="daily_line") or "전체"
+    order = names[label]
+    data = ctx.daily.stats(order, mode)
+    if data is None:
+        if ctx.daily.pending():
+            daily_wait(ctx)
+        else:
+            st.info("데일리 기록을 불러오지 못했습니다. 잠시 뒤 다시 열어 주세요.")
+        return
+    rows = data["rows"]
+    legends = ctx.finder.legends()
+    if kind != "전체":
+        rows = [r for r in rows if (r["spid"] % 1_000_000 in legends) == (kind == "레전드")]
+    if LINES[line]:
+        rows = [r for r in rows if r["position"] in LINES[line]]
+    st.caption(f"{data['date']} · {MODE_LABELS[mode]} 랭커 상위 1만 명이 쓴 카드의 {label} TOP {len(data['rows'])} "
+               f"(FC 온라인 데이터센터 데일리 기록){' · 거른 뒤 ' + str(len(rows)) + '장' if len(rows) != len(data['rows']) else ''}")
+    if not rows:
+        st.info("이 조건에 맞는 카드가 오늘 기록 TOP 에 없습니다.")
+        return
+    players = {str(r["spid"]): get_player(ctx, str(r["spid"])) for r in rows}
+    by_id = {str(r["spid"]): r for r in rows}
+    st.markdown(f'<div class="fc-section">🥇 TOP 3 — {escape(label)}</div>', unsafe_allow_html=True)
+    podium = list({str(r["spid"]): r for r in reversed(rows[:6])}.values())[::-1][:3]   # 같은 카드는 한 번만 (높은 순위로)
+    tile_grid(ctx, [players[str(r["spid"])] for r in podium], key="dpodium", cols=3, ranked=True,
+              kpi=lambda p: f"{escape(label)} <b>{daily_value(order, by_id[p['player_id']]['stats'])}</b>")
+    st.markdown(f'<div class="fc-section">📋 순위<small>{len(rows)}장 · 상세보기를 누르면 선수 페이지</small></div>',
+                unsafe_allow_html=True)
+    for rank, r in enumerate(rows, start=1):
+        p = players[str(r["spid"])]
+        stats = " · ".join((f"<b>{DAILY_STATS[k]} {daily_value(k, r['stats'])}</b>" if k == order
+                            else f"{DAILY_STATS[k]} {daily_value(k, r['stats'])}") for k in SHOWN_STATS if k in r["stats"])
+        grade_text = f" · +{r['grade']}강" if r.get("grade") else ""
+        line_col, btn = st.columns([6, 1], vertical_alignment="center")
+        line_col.markdown(
+            f'<div class="fc-line daily"><div class="rk">{rank}</div>'
+            f'<div class="cv">{ui_parts.card_visual(p, r["ovr"], r["position"], pay=r.get("pay"))}</div>'
+            f'<div><div class="nm">{escape(p["name"])} <span class="sb">{escape(p["season_short"])} · {escape(r["position"])}'
+            f'{grade_text}</span></div>'
+            f'<div class="st">{stats}</div></div></div>', unsafe_allow_html=True)
+        # 같은 카드가 강화 등급만 달리 두 번 나올 수 있다 — 키에 순위를 넣는다
+        btn.button("상세보기", key=f"drank_open_{rank}_{r['spid']}", on_click=open_player, args=(str(r["spid"]),),
+                   width="stretch")
+
+
+def render(ctx: Ctx) -> None:
+    if not ctx.daily.enabled:
+        _ranker_board(ctx)
+        return
+    st.markdown('<div class="fc-section">🏆 파워 랭킹<small>랭커가 실제로 쓴 카드의 기록 순위 — 데일리(어제 · 데이터센터)가 기본, '
+                '넥슨 Open API 로 분석해 둔 카드 순위는 두 번째 탭</small></div>', unsafe_allow_html=True)
+    daily_tab, ranker_tab = st.tabs(["📅 데일리 랭킹 (데이터센터)", "📊 랭커 분석 카드 (넥슨 Open API)"])
+    with daily_tab:
+        _daily_board(ctx)
+    with ranker_tab:
+        _ranker_board(ctx)
 
 
 def _keeper_stats(r: dict, key: str) -> str:
@@ -24,8 +118,8 @@ def _keeper_stats(r: dict, key: str) -> str:
     return " · ".join(f"<b>{escape(text)}</b>" if k == key else escape(text) for k, text in parts)
 
 
-def render(ctx: Ctx) -> None:
-    st.markdown('<div class="fc-section">🏆 파워 랭킹<small>공식경기 랭커 · 카드별 최근 최대 20경기 평균 · '
+def _ranker_board(ctx: Ctx) -> None:
+    st.markdown('<div class="fc-section">📊 랭커 분석 카드<small>공식경기 랭커 · 카드별 최근 최대 20경기 평균 · '
                 '분석해 둔 카드 기준 (선수 페이지를 연 카드도 더해진다)</small></div>', unsafe_allow_html=True)
     g_col, k_col, s_col, m_col = st.container(key="wrap_rkfilters").columns([3.4, 1.2, 1.6, 1.3])
     def first_page() -> None:
@@ -47,7 +141,7 @@ def render(ctx: Ctx) -> None:
         st.caption(SAVE_NOTE)
 
     key = names[sort_name]
-    rows = leaderboard(with_saves(ctx, ctx.players), group, kind or "전체", key, min_matches)
+    rows = leaderboard(with_saves(ctx, ctx.players), group, kind or "전체", key, min_matches, ctx.finder.legends())
     if not rows:
         st.info("조건에 맞는 카드가 없습니다. 최소 경기 수를 낮춰 보세요.")
         return

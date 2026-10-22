@@ -7,7 +7,7 @@ AI 한줄 스카우팅은 선수마다 한 번만 만들어 SQLite(storage/fclab
 from __future__ import annotations
 
 from data_prep.players import index_text, player_label
-from data_prep.prompts import coach_messages, scout_messages
+from data_prep.prompts import coach_messages, general_messages, scout_messages
 from llm import reply_text
 
 
@@ -40,6 +40,11 @@ def scout_line(player: dict, model, cache: AiCache, model_name: str) -> str:
     if line:
         cache.put(key, line)
     return line
+
+
+def general_answer(player: dict, question: str, model) -> str:
+    """수집한 문서에 답이 없을 때 — LLM 일반 지식 답 (화면에 '문서 근거 없음'을 분명히 표시해 따로 보인다)."""
+    return reply_text(model.invoke(general_messages(player, question), temperature=0)).strip()
 
 
 def _fmt(values: dict | None) -> str:

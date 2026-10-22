@@ -91,13 +91,16 @@ def failure_table(grade: int, same_grade: int | None = None) -> dict[int, float]
     return RECOVER[grade]
 
 
-def attempt(grade: int, boost: float, same_grade: int | None = None, rng: random.Random = random) -> tuple[int, str]:
-    """한 번 강화 → (새 등급, '크리티컬' · '성공' · '실패')."""
+def attempt(grade: int, boost: float, same_grade: int | None = None, rng: random.Random = random,
+            protect: bool = False) -> tuple[int, str]:
+    """한 번 강화 → (새 등급, '크리티컬' · '성공' · '실패'). protect = 등급 보호(실패해도 등급 그대로 — BP 강화 등급 보호처럼)."""
     if rng.random() * 100 < success_rate(grade, boost):
         critical = CRITICAL.get((grade, min(same_grade, grade))) if same_grade else None
         if critical and rng.random() * 100 < critical:
             return min(grade + 2, MAX_GRADE), "크리티컬"
         return grade + 1, "성공"
+    if protect:
+        return grade, "실패"
     table = failure_table(grade, same_grade)
     roll, acc = rng.random() * sum(table.values()), 0.0
     for result, pct in sorted(table.items()):
@@ -107,14 +110,18 @@ def attempt(grade: int, boost: float, same_grade: int | None = None, rng: random
     return max(table), "실패"
 
 
-def transition(target: int, boost: float, same_grade: int | None = None) -> np.ndarray:
-    """한 번 강화할 때 등급이 바뀌는 확률 행렬 (행 · 열 = +1 ~ +target, 목표 등급은 도착하면 머문다)."""
+def transition(target: int, boost: float, same_grade: int | None = None, protect: bool = False) -> np.ndarray:
+    """한 번 강화할 때 등급이 바뀌는 확률 행렬 (행 · 열 = +1 ~ +target, 목표 등급은 도착하면 머문다).
+    protect = 등급 보호 — 실패하면 그 등급에 머문다."""
     P = np.zeros((target, target))
     for g in range(1, target):
         p = success_rate(g, boost) / 100
         crit = (CRITICAL.get((g, min(same_grade, g))) or 0) / 100 if same_grade else 0
         P[g - 1, min(g + 2, target) - 1] += p * crit
         P[g - 1, min(g + 1, target) - 1] += p * (1 - crit)
+        if protect:
+            P[g - 1, g - 1] += 1 - p
+            continue
         table = failure_table(g, same_grade)
         total = sum(table.values())
         for result, pct in table.items():
@@ -123,13 +130,13 @@ def transition(target: int, boost: float, same_grade: int | None = None) -> np.n
     return P
 
 
-def odds(start: int, target: int, boost: float, same_grade: int | None = None) -> dict:
+def odds(start: int, target: int, boost: float, same_grade: int | None = None, protect: bool = False) -> dict:
     """start 에서 target 까지 — 모의 실험이 아니라 확률로 정확히 (등급 = 상태인 마르코프 연쇄).
 
     돌려주는 값: mean(평균 시도 횟수, 닿을 수 없으면 None), median · p90(이 횟수 안에 50% · 90%),
     within{시도 횟수: 그 안에 닿을 확률}, curve[(시도 횟수, 누적 확률)], first{결과 등급: 첫 시도 확률}.
     """
-    P = transition(target, boost, same_grade)
+    P = transition(target, boost, same_grade, protect)
     i, j = start - 1, target - 1
 
     def reach(t: int) -> float:
