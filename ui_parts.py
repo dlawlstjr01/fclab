@@ -57,6 +57,7 @@ CARD_CSS = """
 .fc-pos.df, .fc-cv .ov span.df { color: #4aa3ff; } .fc-pos.gk, .fc-cv .ov span.gk { color: #f5b83d; }
 .fc-pay { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 26px; font-size: 11px;
   font-weight: 900; color: #fff; background: #12937a; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.fc-pay.sm { width: 19px; height: 21px; font-size: 9.5px; vertical-align: -5px; margin-left: 4px; }
 .fc-grade { display: inline-block; padding: 0 6px; border-radius: 5px; font-size: 11px; font-weight: 900; line-height: 18px; }
 /* 강화 색 — 공식 데이터센터와 같다 (1 회색 · 2~4 동 · 5~7 은 · 8~10 금 · 11~13 백금) */
 .fc-grade.g1, .pc .gd.g1 { color: #c5c8c9; background: linear-gradient(140deg, #51545a 0%, #42464d 100%); border: 1px solid #393a3c; }
@@ -70,29 +71,44 @@ CARD_CSS = """
    강화를 따로 고정 위치에 두면 급여 육각형이 길어질 때 겹친다 — 같은 칸에 쌓아 겹칠 수 없게 하고, 크기는 이름(아래 77%)에
    닿지 않게 줄였다. 보유 신규 특성(오른쪽 위), 국기 · 이름(아래), 카드 밑에 시세 */
 .pc { width: 100%; }
-.pc .fc-cv .ov { top: calc(var(--y0) * 100% + var(--h) * 6%); gap: .8cqw; }
-.pc .fc-cv .ov b { font-size: calc(var(--w) * 26cqw); }
-.pc .fc-cv .ov span { font-size: calc(var(--w) * 15cqw); }
-.pc .fc-cv .ov .fc-pay { width: calc(var(--w) * 22cqw); height: calc(var(--w) * 24cqw); font-size: calc(var(--w) * 13cqw);
+.pc .fc-cv .ov { top: calc(var(--y0) * 100% + var(--h) * 5%); gap: 1.4cqw; }
+.pc .fc-cv .ov b { font-size: calc(var(--w) * 25cqw); }
+.pc .fc-cv .ov span { font-size: calc(var(--w) * 14cqw); }
+.pc .fc-cv .ov .fc-pay { width: calc(var(--w) * 21cqw); height: calc(var(--w) * 23cqw); font-size: calc(var(--w) * 12cqw);
   color: #e9eef6; background: rgba(40,46,58,.85); text-shadow: none; }
 .pc .fc-cv.light .ov .fc-pay { color: #fff; background: #6b6f78; }
 .pc .fc-cv .ov small { font-size: calc(var(--w) * 14cqw); font-weight: 800; color: #ffd166; }
 .pc .tr { position: absolute; z-index: 1; right: calc((1 - var(--x0) - var(--w)) * 100% + var(--w) * 4%);
   top: calc(var(--y0) * 100% + var(--h) * 4%); width: calc(var(--w) * 28%); filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
-.pc .gd { min-width: calc(var(--w) * 20cqw); padding: .3cqw 1cqw; border-radius: 3px; font-size: calc(var(--w) * 14cqw);
-  font-weight: 900; font-style: normal; line-height: 1.2; text-align: center; text-shadow: none;
-  box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+.pc .gd { min-width: calc(var(--w) * 19cqw); margin-top: 1.8cqw; padding: .2cqw .9cqw; border-radius: 3px;
+  font-size: calc(var(--w) * 12.5cqw); font-weight: 900; font-style: normal; line-height: 1.2; text-align: center;
+  text-shadow: none; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
 .pc .nm { position: absolute; z-index: 1; left: calc(var(--x0) * 100% + var(--w) * 4%); width: calc(var(--w) * 92%);
-  top: calc(var(--y0) * 100% + var(--h) * 77%); font-size: calc(var(--w) * 16cqw); font-weight: 800; line-height: 1.15;
+  top: calc(var(--y0) * 100% + var(--h) * 79%); font-size: calc(var(--w) * 16cqw); font-weight: 800; line-height: 1.15;
   text-align: center; color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
 .pc .fl { position: absolute; z-index: 1; left: calc(var(--x0) * 100%); width: calc(var(--w) * 100%);
-  top: calc(var(--y0) * 100% + var(--h) * 87%); display: flex; justify-content: center; }
+  top: calc(var(--y0) * 100% + var(--h) * 89%); display: flex; justify-content: center; }
 .pc .fl img { height: calc(var(--w) * 13cqw); box-shadow: 0 0 2px rgba(0,0,0,.6); }
 .pc .fc-cv.light .nm { color: #1d1608; text-shadow: 0 0 3px rgba(255,255,255,.9); }
 .pc .price { margin-top: 1px; font-size: 10.5px; font-weight: 700; color: #e6ecf5; text-shadow: 0 1px 2px #000; white-space: nowrap; }
 .pc .price b { color: #ffd166; }
+/* 아이콘 이름 풍선 — 올리면 바로 (title 은 1초 뒤에야 뜨고, 줄 · 카드 위 투명 버튼에 가려 아예 안 떴다) */
+.tip { position: relative; z-index: 4; display: inline-flex; align-items: center; }
+.tip:hover::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  padding: 3px 8px; border-radius: 6px; background: #0b1426; color: #f0f3f8; font-size: 11.5px; font-weight: 700; line-height: 1.35;
+  white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.18); pointer-events: none;
+  z-index: 20; }
+.pc .tr.tip { position: absolute; }
+.pc .tip, .pc .tip img { pointer-events: auto; }
+/* 능력치 숫자 색 — FC 온라인 데이터센터와 같은 10 단위 (80 파랑 · 100 보라 · 120 자홍 · 130 빨강 · 140 금 · 150 주황 · 160 청록 · 170 초록) */
+.o50 { color: #8f96a0; } .o80 { color: #2194d6; } .o90 { color: #4d7fe8; } .o100 { color: #8a63ff; } .o110 { color: #c060ff; }
+.o120 { color: #e23cd3; } .o130 { color: #ff3b3b; } .o140 { color: #e0b100; } .o150 { color: #ffa800; } .o160 { color: #11caaa; }
+.o170 { color: #01d549; }
 """
+# 흰 바탕(라이트 테마)에서는 공식 색 그대로 — 어두운 바탕용으로 조금 밝힌 90 ~ 140 을 되돌린다
+LIGHT_STATS = (".o90 { color: #175dde; } .o100 { color: #6e3bff; } .o110 { color: #b33bff; } .o120 { color: #cf13c0; } "
+               ".o130 { color: #dc0000; } .o140 { color: #c99b00; }")
 STATUS = {"승": "#0ca30c", "무": "#898781", "패": "#d03b3b"}
 ACCENT = "#16e08a"
 
@@ -333,6 +349,38 @@ div[class*="st-key-prow_"] .stButton button {{ opacity: 0; cursor: pointer; }}
 div[class*="st-key-prow_"] .stButton button:focus-visible {{ opacity: 1; background: transparent; color: transparent;
   border: 2px solid {ACCENT}; }}
 div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55); }}
+/* 선수 배치 창 (views/tactics.place_dialog) — 공식 '선수 배치'처럼 한 줄에 순위 · 선수 · OVR · 국가 · 팀컬러 · 급여 · 예상 총급여 */
+.fc-placehd {{ display: flex; align-items: center; gap: 10px; font-size: 14px; color: {t['ink2']}; margin-bottom: 2px; }}
+.fc-placehd b {{ color: {t['ink']}; }}
+.fc-placehd .pay {{ margin-left: auto; font-size: 13px; }}
+.fc-place {{ display: grid; grid-template-columns: 24px 44px minmax(0, 1fr) 60px 100px 84px 40px 80px; gap: 8px;
+  align-items: center; padding: 6px 12px 6px 6px; border-radius: 12px; background: {t['surface']}; border: 1px solid {t['border']}; }}
+.fc-place.head {{ background: transparent; border: none; padding: 0 12px 0 6px; font-size: 11.5px; font-weight: 700; color: {t['muted']}; }}
+.fc-place.head span:nth-child(4), .fc-place.head span:nth-child(7) {{ text-align: center; }}
+.fc-place.head span:nth-child(8) {{ text-align: right; }}
+.fc-place .rk {{ font-size: 15px; font-weight: 900; color: {t['muted']}; text-align: center; font-variant-numeric: tabular-nums; }}
+.fc-place .who {{ min-width: 0; }}
+.fc-place .l1 {{ display: flex; align-items: center; gap: 6px; min-width: 0; }}
+.fc-place .l1 .ssn {{ height: 15px; }}
+.fc-place .l1 .nm {{ min-width: 0; font-size: 14.5px; font-weight: 800; color: {t['ink']}; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }}
+.fc-place .l2 {{ font-size: 11.5px; color: {t['ink2']}; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.fc-place .tcmark {{ margin-left: 6px; color: {ACCENT}; font-weight: 700; }}
+.fc-place .ovr {{ font-size: 21px; font-weight: 900; text-align: center; font-variant-numeric: tabular-nums; }}
+.fc-place .ovr small {{ font-size: 12px; color: {t['muted']}; }}
+.fc-place .nat, .fc-place .tcs {{ display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 11.5px; color: {t['ink2']}; }}
+.fc-place .nat small {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.fc-place .nat img, .fc-place .tcs img {{ height: 18px; max-width: 26px; object-fit: contain; display: block; }}
+.fc-place .pay {{ display: flex; justify-content: center; }}
+.fc-place .pay .fc-pay {{ width: 24px; height: 26px; font-size: 11px; }}
+.fc-place .tot {{ font-size: 15px; font-weight: 800; color: {t['ink']}; text-align: right; font-variant-numeric: tabular-nums; }}
+.fc-place .tot small {{ font-size: 11px; color: {t['muted']}; font-weight: 600; }}
+.fc-place .tot b.over {{ color: #ff6b6b; }}
+.fc-place .wait {{ color: {t['muted']}; }}
+div[class*="st-key-prow_place_"] {{ margin-bottom: 2px; }}
+div[class*="st-key-prow_"]:hover .fc-place {{ border-color: rgba(22,224,138,.55); }}
+@media (max-width: 760px) {{ .fc-place {{ grid-template-columns: 20px 38px minmax(0, 1fr) 46px 34px 62px; }}
+  .fc-place .nat, .fc-place .tcs, .fc-place.head span:nth-child(5), .fc-place.head span:nth-child(6) {{ display: none; }} }}
 .fc-tile .cvw {{ width: 104px; margin: 24px auto 2px; }}
 .fc-tile .meta {{ display: flex; align-items: center; justify-content: center; gap: 7px; margin: 3px 0 1px;
   font-size: 12px; color: {t['ink2']}; }}
@@ -397,12 +445,20 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-abil .it {{ display: flex; justify-content: space-between; font-size: 13px; color: {t['ink2']}; padding: 2px 0;
   border-bottom: 1px dashed {t['grid']}; }}
 .fc-abil .it b {{ font-variant-numeric: tabular-nums; }}
-.fc-abil .v1 {{ color: #8fb3ff; }} .fc-abil .v2 {{ color: #2fd389; }} .fc-abil .v3 {{ color: #f2c94c; }}
-.fc-abil .v4 {{ color: #ff6b6b; }}
+.o60 {{ color: {'#606972' if theme == 'light' else '#a3abb6'}; }} .o70 {{ color: {'#1f2d37' if theme == 'light' else '#dfe4ea'}; }}
+{LIGHT_STATS if theme == 'light' else ''}
 /* 팀컬러가 따로 올려 주는 능력치 (예: 바르셀로나 Lv.4 짧은 패스 · 볼 컨트롤) — 이름까지 초록, 옅은 초록 면 */
 .fc-abil .it.focus {{ color: {ACCENT}; font-weight: 800; background: rgba(22,224,138,.10); border-radius: 6px;
   padding: 2px 6px; margin: 0 -6px; }}
 @media (max-width: 760px) {{ .fc-abil {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
+/* 세부 능력치 (ability_table) — 공식 데이터센터처럼 위에서 아래로 이어지는 세 단, 묶음 이름은 첫 능력치와 붙여 둔다 */
+.fc-abil.flow {{ display: block; column-count: 3; column-gap: 22px; }}
+.fc-abil.flow .hd, .fc-abil.flow .it {{ break-inside: avoid; }}
+.fc-abil.flow .grp {{ margin: 0; padding: 9px 0 2px; }}
+.fc-abil.flow > .hd:first-child .grp {{ padding-top: 0; }}
+.fc-abil.flow .it {{ padding: 4px 0; }}
+.fc-abil.flow .it.focus {{ padding: 4px 6px; }}
+@media (max-width: 760px) {{ .fc-abil.flow {{ column-count: 2; }} }}
 /* 문서에 없어 AI 일반 지식으로 답한 부분 */
 .fc-general {{ margin-top: 10px; padding: 10px 14px; border: 1px solid #f2c94c; border-radius: 12px; background: rgba(242,201,76,.08);
   font-size: 14px; color: {t['ink']}; line-height: 1.6; }}
@@ -535,6 +591,21 @@ div.st-key-gr_actions button p, div[class*="st-key-again_"] button p {{ white-sp
 .fc-gauge i {{ display: block; height: 8px; background: {ACCENT}; }}
 .fc-gauge.over i {{ background: #ff6b6b; }}
 
+/* 상세 검색 (views/filters.py — bstpg 상세 검색처럼 왼쪽 칸 이름 · 오른쪽 고르기) */
+div[class*="st-key-fpanel_"] {{ background: {t['raise']}; border: 1px solid {t['edge']}; border-radius: 12px; padding: 12px 14px; gap: 10px; }}
+.fc-flabel {{ font-size: 13.5px; font-weight: 800; color: {t['ink']}; line-height: 1.25; word-break: keep-all; }}
+.fc-flabel small {{ display: block; font-size: 11px; font-weight: 500; color: {t['muted']}; }}
+.fc-flabel.sub {{ font-size: 12.5px; font-weight: 700; color: {t['ink2']}; min-width: 70px; }}
+.fc-tilde {{ color: {t['muted']}; font-weight: 800; padding: 0 2px; }}
+div[class*="st-key-fpos_"] [data-testid="stWidgetLabel"] p {{ font-size: 12px; font-weight: 800; color: {ACCENT}; }}
+/* 주발 · 약발 · 개인기 같은 고르기 버튼 — 안 고른 것도 또렷한 테두리 (예전 주발 버튼은 바탕과 섞였다) */
+button[data-testid^="stBaseButton-segmented_control"], button[data-testid^="stBaseButton-pills"] {{
+  min-height: 0; padding: 4px 11px; border-radius: 999px; }}
+button[data-testid="stBaseButton-segmented_control"] {{ background: {t['raise']}; border: 1px solid {t['edge']}; color: {t['ink']}; }}
+button[data-testid="stBaseButton-segmented_control"]:hover {{ border-color: {ACCENT}; }}
+button[data-testid="stBaseButton-segmented_controlActive"], button[data-testid="stBaseButton-pillsActive"] {{
+  background: rgba(22,224,138,.16); border: 1px solid {ACCENT}; color: {t['ink']}; font-weight: 800; }}
+
 /* 강화 등급 버튼 (views/widgets.grade_buttons) — 등급마다 공식 색, 고른 것은 흰 테두리 · 나머지는 흐리게 */
 .fc-gradelabel {{ font-size: 14px; line-height: 1.5; color: {t['ink']}; margin: 0; }}
 div[class*="st-key-gbtn_"] button {{ min-height: 0; padding: 3px 9px; border-radius: 7px; font-weight: 900; }}
@@ -566,6 +637,24 @@ div[class*="st-key-gbtn_"][class*="_on_"] button {{ opacity: 1; box-shadow: 0 0 
 .fc-sqchips .pay.over {{ color: #ff6b6b; border-color: rgba(255,107,107,.5); }}
 .fc-sqchips .none {{ color: {t['muted']}; border-color: {t['border']}; font-weight: 600; }}
 button[data-testid="stPopoverButton"] p {{ white-space: nowrap; }}
+
+/* FC 온라인 팀 전술 항목 — 항목마다 카드 (이름 · 선택지 칩 · 설명) */
+.fc-tacgrid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }}
+.fc-tacgrid .it {{ border-radius: 14px; padding: 12px 14px; background: {t['surface']}; border: 1px solid {t['border']};
+  border-top: 3px solid {ACCENT}; }}
+.fc-tacgrid .it b {{ font-size: 14.5px; color: {t['ink']}; }}
+.fc-tacgrid .op {{ display: flex; flex-wrap: wrap; gap: 4px; margin: 7px 0 6px; }}
+.fc-tacgrid .op span {{ padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; color: {t['ink']};
+  background: {t['track']}; border: 1px solid {t['border']}; }}
+.fc-tacgrid .op span.rng {{ color: #0b1426; background: {ACCENT}; border-color: {ACCENT}; }}
+.fc-tacgrid p {{ margin: 0; font-size: 12.5px; line-height: 1.55; color: {t['ink2']}; }}
+/* 강화 시뮬 — 선수를 고르기 전 빈 카드 */
+.fc-cv.empty {{ background: radial-gradient(120% 90% at 50% 0%, #253655 0%, #151f35 60%, #0d1424 100%); border-radius: 12%;
+  border: 2px dashed rgba(255,255,255,.18); box-sizing: border-box; }}
+.fc-cv.empty .fig {{ opacity: .35; }}
+.fc-cv.empty .fig svg {{ width: 70%; height: auto; }}
+.fc-cv.empty .q {{ position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 14%;
+  font-size: 7cqw; font-weight: 800; color: rgba(255,255,255,.65); }}
 
 /* 칩 */
 .fc-chips {{ display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }}
@@ -692,6 +781,11 @@ def grade_badge(grade: int | None) -> str:
     return f'<span class="fc-grade {grade_tier(g)}">+{g}강</span>'
 
 
+def pay_badge(pay: int | None) -> str:
+    """글줄에 넣는 작은 급여 육각형 (랭킹 줄 — 작은 카드 그림 위에 얹으면 그림을 가릴 만큼 컸다)."""
+    return f' <span class="fc-pay sm" title="급여">{pay}</span>' if pay is not None else ""
+
+
 def position_badge(position: str | None) -> str:
     return f'<span class="fc-pos {POSITION_KIND.get(position or "", "mf")}">{escape(position)}</span>' if position else ""
 
@@ -727,6 +821,25 @@ def card_visual(player: dict, ovr: int | None = None, position: str | None = Non
     return f'<div class="fc-cv{kind}"{style}><div class="fig">{figure}</div>{overlay}{inner}</div>'
 
 
+SILHOUETTE = ('<svg viewBox="0 0 100 110" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="50" cy="32" r="20" '
+              'fill="#cfd8ea"/><path d="M12 108c2-28 18-44 38-44s36 16 38 44z" fill="#cfd8ea"/></svg>')
+
+
+def empty_card(text: str = "선수를 고르세요") -> str:
+    """선수를 고르기 전의 빈 카드 — 빈 배경 · 선수 실루엣 · 안내 (강화 시뮬레이터 오른쪽 미리보기)."""
+    return (f'<div class="pc"><div class="fc-cv empty"><div class="fig">{SILHOUETTE}</div>'
+            f'<div class="ov"><b>?</b><span class="mf">POS</span></div><div class="q">{escape(text)}</div></div></div>')
+
+
+def tactic_cards(items: list[tuple[str, str, str]]) -> str:
+    """FC 온라인 팀 전술 항목 — 항목마다 카드: 이름 · 선택지 칩(숫자 범위는 초록) · 설명."""
+    cards = []
+    for name, options, desc in items:
+        chips = "".join(f'<span class="{"rng" if "~" in o else ""}">{escape(o.strip())}</span>' for o in options.split("/"))
+        cards.append(f'<div class="it"><b>{escape(name)}</b><div class="op">{chips}</div><p>{escape(desc)}</p></div>')
+    return f'<div class="fc-tacgrid">{"".join(cards)}</div>'
+
+
 def bp_short(value: int | None) -> str:
     """시세를 짧게 — 21.3억 · 9,720만 · 4,500 (경기장 카드 밑)."""
     if value is None:
@@ -740,13 +853,15 @@ def bp_short(value: int | None) -> str:
 
 
 def pitch_card(player: dict, code: str, ovr: int | None, exact: bool = True, grade: int | None = None,
-               pay: int | None = None, trait: dict | None = None, flag: str = "", price: str = "", high: bool = False) -> str:
+               pay: int | None = None, trait: dict | None = None, flag: str = "", price: str = "", high: bool = False,
+               nation: str = "") -> str:
     """경기장 자리의 선수 카드 (공식 스쿼드 메이커처럼) — 시즌 카드 위 왼쪽 칸에 그 자리 OVR · 포지션 · 급여 · 강화를 차례로,
     오른쪽 위 보유 신규 특성, 아래 국기 · 이름. 카드 밑에 시세 · 구단 가치 중 비율. trait = {name, icon}."""
     g = grade or 1
-    flag_html = f'<img src="{escape(image(flag))}" alt="">' if flag and image(flag) else ""
-    inner = (f'<img class="tr" src="{escape(image(trait["icon"]))}" alt="" title="보유 신규 특성: {escape(trait["name"])}">'
-             if trait else "")
+    flag_html = (f'<span class="tip" data-tip="{escape(nation or "국적")}"><img src="{escape(image(flag))}" alt=""></span>'
+                 if flag and image(flag) else "")
+    inner = (f'<span class="tr tip" data-tip="보유 신규 특성 · {escape(trait["name"])}">'
+             f'<img src="{escape(image(trait["icon"]))}" alt="{escape(trait["name"])}" draggable="false"></span>' if trait else "")
     inner += f'<div class="nm">{escape(player["name"])}</div>' + (f'<div class="fl">{flag_html}</div>' if flag_html else "")
     grade_html = f'<i class="gd {grade_tier(g)}" title="강화 {g}단계">{g}</i>'
     return (f'<div class="pc">{card_visual(player, ovr, code, pay=pay, inner=inner, exact=exact, stack=grade_html, high=high)}'
@@ -879,17 +994,20 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
     pay_html = f'<span class="fc-pay" title="급여">{pay}</span>' if pay is not None else ""
     name_html = f'<span class="nm" title="{escape(player["name"])}">{escape(player["name"])}</span>'
     foot_html = foot_text(foot or info.get("foot_lr"))
-    icons = "".join(f'<img src="{escape(image(url))}" alt="" title="{escape(name)}">' for name, url in crests if image(url))
+    icons = "".join(f'<span class="tip" data-tip="{escape(name)}"><img src="{escape(image(url))}" alt="{escape(name)}"></span>'
+                    for name, url in crests if image(url))
     l3 = icons or (f'<span class="wait">{escape(wait_text)}</span>' if not info and wait_text else "")
     summary = info.get("summary") or {}
     bonus = GRADE_OVR[grade]
     # 능력치 하나('속력 120')는 한 덩어리 — 줄을 바꿔도 이름과 숫자가 갈라지지 않게
     up = tc_summary or {}
     l4 = "".join(f'<span>{k} <b class="up" title="팀컬러 +{up[k]}">{v + bonus + up[k]}</b></span>' if up.get(k)
-                 else f"<span>{k} <b>{v + bonus}</b></span>" for k, v in summary.items() if k in SUMMARY)
+                 else f'<span>{k} <b class="{stat_class(v + bonus)}">{v + bonus}</b></span>'
+                 for k, v in summary.items() if k in SUMMARY)
     traits = info.get("traits") or []
-    trait_html = "".join(f'<img class="{"new" if t["new"] else ""}" src="{escape(image(t["icon"]))}" alt="{escape(t["name"])}" '
-                         f'title="{escape(t["name"])}{" (신규 특성)" if t["new"] else ""}">' for t in traits[:5])
+    trait_html = "".join(f'<span class="tip" data-tip="{escape(t["name"])}{" · 신규 특성" if t["new"] else ""}">'
+                         f'<img class="{"new" if t["new"] else ""}" src="{escape(image(t["icon"]))}" alt="{escape(t["name"])}"></span>'
+                         for t in traits[:5])
     if len(traits) > 5:
         trait_html += f"<small>+{len(traits) - 5}</small>"
     shown = "-" if ovr is None else f"{ovr}{'' if exact else '*'}"
@@ -911,8 +1029,41 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
             + f'</div><div class="side"><div class="traits">{trait_html}</div><div class="ovr">{shown}{label}</div></div></div>')
 
 
-def _tier(value: int) -> str:
-    return "v4" if value >= 130 else "v3" if value >= 115 else "v2" if value >= 100 else "v1" if value >= 80 else ""
+def place_head(code: str) -> str:
+    """선수 배치 창의 머리줄 — 순위 · 선수 · 그 자리 OVR · 국가 · 팀컬러 · 급여 · 예상 총급여."""
+    return (f'<div class="fc-place head"><span>#</span><span></span><span>선수</span><span>{escape(code)} OVR</span>'
+            '<span>국가</span><span>팀컬러</span><span>급여</span><span>예상 총급여</span></div>')
+
+
+def place_row(player: dict, *, rank: int | None, ovr: int | None, exact: bool, position: str, grade: int, pay: int | None,
+              total: int | None, cap: int, nation: tuple[str, str] | None, crests: list[tuple[str, str]], note: str = "",
+              teamcolor: str | None = None, waiting: bool = False) -> str:
+    """선수 배치 창의 한 줄 (공식 '선수 배치'처럼) — 순위 · 카드 그림 · 포지션 · 시즌 · 이름 · 그 자리 OVR · 국기 · 팀컬러 엠블럼 ·
+    급여 · 이 카드를 넣었을 때의 총급여(넘으면 빨강). teamcolor = 스쿼드 팀컬러에 드는 카드면 그 이름 (팀컬러 우선)."""
+    season_icon = image(player.get("season_img"))
+    season = f'<img class="ssn" src="{escape(season_icon)}" alt="">' if season_icon else ""
+    shown = "-" if ovr is None else f'<b class="{stat_class(ovr)}">{ovr}</b>{"" if exact else "<small>*</small>"}'
+    flag = (f'<span class="tip" data-tip="{escape(nation[0])}"><img src="{escape(image(nation[1]))}" alt=""></span>'
+            f'<small>{escape(nation[0])}</small>' if nation and image(nation[1]) else
+            '<small class="wait">…</small>' if waiting else "-")
+    icons = "".join(f'<span class="tip" data-tip="{escape(name)}"><img src="{escape(image(url))}" alt="{escape(name)}"></span>'
+                    for name, url in crests[:3] if image(url)) or ('<small class="wait">…</small>' if waiting else "-")
+    tc = f'<span class="tcmark" title="스쿼드 팀컬러에 드는 카드">🎨 {escape(teamcolor)}</span>' if teamcolor else ""
+    over = total is not None and total > cap
+    total_html = f'<b class="{"over" if over else ""}">{total}</b><small>/{cap}</small>' if total is not None else "-"
+    sub = escape(player.get("season", "")) + (f" · {escape(note)}" if note else "")
+    return (f'<div class="fc-place"><span class="rk">{rank or ""}</span><div class="cv">{card_visual(player)}</div>'
+            f'<div class="who"><div class="l1">{position_badge(position)}{season}<b class="nm">{escape(player["name"])}</b>'
+            f'{grade_badge(grade)}</div><div class="l2">{sub}{tc}</div></div>'
+            f'<div class="ovr">{shown}</div><div class="nat">{flag}</div><div class="tcs">{icons}</div>'
+            f'<div class="pay"><span class="fc-pay">{pay if pay is not None else "?"}</span></div><div class="tot">{total_html}</div></div>')
+
+
+def stat_class(value: int | None) -> str:
+    """능력치 숫자 색 — FC 온라인 데이터센터의 over50 ~ over170 (10 단위)처럼 'o130' 같은 이름."""
+    if value is None:
+        return ""
+    return f"o{max(50, min(170, int(value) // 10 * 10))}"
 
 
 def _up(value: int, base: int | None) -> str:
@@ -928,7 +1079,7 @@ def ovr_grid(position_ovr: dict[str, int], order: tuple[str, ...], bonus: int = 
     best = max(position_ovr.values())
     cells = "".join(
         f'<div class="{"best" if position_ovr.get(pos) == best else ""}"><span class="fc-pos {POSITION_KIND.get(pos, "mf")}" '
-        f'style="border:none;padding:0">{pos}</span><b>{position_ovr[pos] + bonus}</b>'
+        f'style="border:none;padding:0">{pos}</span><b class="{stat_class(position_ovr[pos] + bonus)}">{position_ovr[pos] + bonus}</b>'
         f'{_up(position_ovr[pos] + bonus, (base or {}).get(pos))}</div>'
         if pos in position_ovr else '<div class="empty"></div>' for pos in order)
     return f'<div class="fc-ovrgrid">{cells}</div>'
@@ -940,16 +1091,19 @@ def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0
     focus = {능력치: 더한 값} — 팀컬러가 따로 올려 주는 능력치를 강조한다 ('전체 능력치' 말고 그 팀컬러만의 것)."""
     parts = []
     for group, names in ABILITY_GROUPS.items():
-        head = f" <b>{summary[group] + bonus}</b>" if group in summary else ""
-        parts.append(f'<div class="grp">{group}{head}</div>')
+        head = f' <b class="{stat_class(summary[group] + bonus)}">{summary[group] + bonus}</b>' if group in summary else ""
+        items = []
         for name in names:
             if name in stats:
                 value = stats[name] + bonus
                 extra = (focus or {}).get(name)
                 mark = f' focus" title="팀컬러가 따로 올려 주는 능력치 +{extra}' if extra else ""
-                parts.append(f'<div class="it{mark}">{escape(name)}<span><b class="{_tier(value)}">{value}</b>'
+                items.append(f'<div class="it{mark}">{escape(name)}<span><b class="{stat_class(value)}">{value}</b>'
                              f'{_up(value, (base or {}).get(name))}</span></div>')
-    return f'<div class="fc-abil">{"".join(parts)}</div>'
+        if items:   # 묶음 이름은 첫 능력치와 한 덩어리 — 단이 바뀌어도 이름만 홀로 남지 않게
+            parts.append(f'<div class="hd"><div class="grp">{group}{head}</div>{items[0]}</div>{"".join(items[1:])}')
+    # 공식 데이터센터처럼 위에서 아래로 이어서 세 단 — 묶음마다 3칸 격자로 두면 2 · 5개 묶음 뒤에 빈칸이 생겨 줄이 들쭉날쭉했다
+    return f'<div class="fc-abil flow">{"".join(parts)}</div>'
 
 
 CMP_MARGIN = 4   # 비교 막대의 눈금 — 그 묶음에 나온 가장 낮은 값보다 이만큼 아래를 0 으로 (0 부터 재면 120 · 130 대가 같은 길이로 보인다)
@@ -976,7 +1130,7 @@ def _cmp_cell(value: int | None, other: int | None, base: int | None, side: str,
     low, high = scale
     width = max(3.0, min(100.0, (value - low) / (high - low) * 100))
     bar = f'<i style="width:{width:.0f}%"></i>'
-    shown = f"<b>{value}{mark}</b>" + (f"<small class=\"pos\">{escape(pos)}</small>" if pos else "")
+    shown = f'<b class="{stat_class(value)}">{value}{mark}</b>' + (f"<small class=\"pos\">{escape(pos)}</small>" if pos else "")
     inner = f"{gap}{shown}{up}" if side == "a" else f"{shown}{up}{gap}"
     bar_html, value_html = f'<span class="bar">{bar}</span>', f'<span class="v">{inner}</span>'
     cells = bar_html + value_html if side == "a" else value_html + bar_html   # 숫자는 가운데 이름 옆, 막대는 바깥으로
@@ -1048,8 +1202,9 @@ def _season(player: dict) -> str:
 # ── 타일 · 카드 ─────────────────────────────────────────────────
 
 def tile(player: dict, rank: int | None = None, kpi: str | None = None, badge: str = "", note: str = "",
-         ovr: int | None = None, position: str | None = None, pay: int | None = None, foot: dict | None = None) -> str:
-    """카드 타일 — 시즌 카드 그림(OVR · 포지션) · 이름 · 급여 · 주발/약발. badge(예: 랭킹 순위)와 note(예: AI 추천 이유)는
+         ovr: int | None = None, position: str | None = None, pay: int | None = None, foot: dict | None = None,
+         grade: int | None = None) -> str:
+    """카드 타일 — 시즌 카드 그림(OVR · 포지션 · 강화) · 이름 · 급여 · 주발/약발. badge(예: 랭킹 순위)와 note(예: AI 추천 이유)는
     카드 안 아래쪽에."""
     icon = " icon" if "ICON" in player.get("season", "") else ""
     if kpi is None:   # 포지션에 맞는 대표 스탯 (공격 골 · 도움 / 수비 태클 · 블록 / 골키퍼 선방률)
@@ -1059,7 +1214,7 @@ def tile(player: dict, rank: int | None = None, kpi: str | None = None, badge: s
     extra = (f'<div class="badge">{escape(badge)}</div>' if badge else "") + (f'<div class="why">{escape(note)}</div>' if note else "")
     return (
         f'<div class="fc-tile{icon}">{_season(player)}{rank_html}'
-        f'<div class="cvw">{card_visual(player, ovr, position)}</div>'
+        f'<div class="cvw">{card_visual(player, ovr, position, grade)}</div>'
         f'<div class="nm">{escape(player["name"])}</div>{_tile_meta(pay, foot)}'
         f'<div class="sub">{escape(sub)}</div><div class="kpi">{kpi}</div>{extra}</div>'
     )

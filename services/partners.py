@@ -49,6 +49,28 @@ def pair_plan(position: str | None) -> dict | None:
     return {"kind": "central", "group": group, "partner": base, "abilities": KEY_ABILITIES[group]}
 
 
+def teamcolor_partners(card: dict, position: str | None, rows: list[dict], k: int = 6) -> list[dict]:
+    """같은 팀컬러를 가진 선수 중의 짝 — rows = 그 팀컬러가 적용되는 카드(데이터센터 선수 검색). 선수마다 OVR 이 가장 높은
+    카드 한 장, 이 선수(card = {spid, pid})는 뺀다. 짝 자리(반대쪽 측면 · 같은 줄의 다른 한 명)에 서는 카드가 먼저, 그다음
+    다른 자리 — 같은 묶음 안에서는 OVR 높은 순. 돌려주는 값: [{spid, name, ovr, position, pair}] k 장."""
+    plan = pair_plan(position)
+    partner = set()
+    if plan:
+        partner = {plan["partner"]} if plan["kind"] == "mirror" else set(GROUP_POSITIONS[plan["group"]])
+    best: dict[int, dict] = {}
+    for r in rows:
+        pid = r["spid"] % 1_000_000
+        if pid != card["pid"] and (pid not in best or (r.get("ovr") or 0) > (best[pid].get("ovr") or 0)):
+            best[pid] = r
+    out = []
+    for r in best.values():
+        main = (r.get("positions") or [(None, None)])[0][0]   # 데이터센터 선수 검색의 첫 포지션 = 대표 포지션
+        out.append({"spid": r["spid"], "name": r["name"], "ovr": r.get("ovr"), "position": main,
+                    "pair": USAGE_GROUP.get(main or "") in partner})
+    out.sort(key=lambda c: (not c["pair"], -(c["ovr"] or 0)))
+    return out[:k]
+
+
 def solo_share(group: str, formations: list[dict]) -> tuple[float | None, list[str]]:
     """그 묶음이 한 명뿐인 포메이션의 이용 비율 (그 묶음이 있는 포메이션 중) · 그런 포메이션 이름(이용 많은 순)."""
     members = set(GROUP_POSITIONS.get(group, ()))

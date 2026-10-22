@@ -97,6 +97,17 @@ NEW_TRAIT_ICONS = {
     "체이서": 54, "GK 빠른 반응": 57, "GK 공중볼 장악": 60,
 }
 NEW_TRAITS = frozenset(NEW_TRAIT_ICONS)
+# 일반 특성(31개)의 아이콘 번호 — 그 특성을 가진 카드의 선수 정보 화면에서 읽었다 (상세 검색의 특성 고르기에 쓴다)
+TRAIT_ICONS = {
+    "선호 포지션 고집": 0, "장거리 스로잉": 1, "파울 유도 선호": 3, "유리몸": 4, "강철몸": 5, "주발 선호": 6, "슬라이딩 태클 선호": 7,
+    "개인 플레이 선호": 9, "트러블 메이커": 11, "얼리 크로스 선호": 12, "예리한 감아차기": 13, "화려한 개인기": 14, "긴 패스 선호": 15,
+    "중거리 슛 선호": 16, "스피드 드리블러": 17, "플레이 메이커": 18, "GK 공격 가담": 19, "GK 능숙한 펀칭": 20, "GK 멀리 던지기": 21,
+    "파워 헤더": 22, "GK 침착한 1:1 수비": 23, "초 장거리 스로인": 24, "아웃사이드 슈팅/크로스": 25, "패스 마스터": 27, "승부욕": 28,
+    "화려한 걷어내기": 29, "칩슛 선호": 41, "테크니컬 드리블러": 42, "스위퍼 키퍼": 43, "GK 소극적 크로스 수비": 48,
+    "GK 적극적 크로스 수비": 49, **NEW_TRAIT_ICONS,
+}
+# 검색의 체형 (strPhysical — 여럿이면 쉼표로 잇는다). 고유 체형은 선수만의 체형 모델(펠레 · 메시 · 호나우두 …)
+PHYSICAL = {"마름": "1,4,7", "보통": "2,5,8", "건장": "3,6,9", "마름(고유)": "11", "보통(고유)": "12", "건장(고유)": "13"}
 
 # 응답 HTML 에서 값을 찾는 패턴 — 화면이 바뀌면 여기만 고친다
 ROW_SPLIT = re.compile(r'<div id="area_playerunit_(\d+)">')
@@ -181,6 +192,12 @@ FOOT_MAIN = re.compile(r"<strong>\s*([LR])")
 FOOT_SIDES = re.compile(r"([LR])\s*(\d)")
 NATION_FLAG = re.compile(r'<div class="etc nation">.*?<img src="([^"]+)"', re.S)
 CLUB_CREST = re.compile(r'<div class="etc team">\s*<span class="img"><img src="([^"]+)"', re.S)
+
+
+def trait_icon(name: str) -> str:
+    """특성 이름 → 아이콘 주소 (모르는 특성은 ''). 번호는 두 자리로 (trait_icon_06.png)."""
+    no = TRAIT_ICONS.get(name)
+    return TRAIT_ICON.format(no=f"{no:02d}") if no is not None else ""
 
 
 def parse_foot(fragment: str | None) -> dict | None:
@@ -351,12 +368,14 @@ def list_form(name: str = "", *, seasons: list[int] | None = None, positions: li
               height: tuple[int, int] | None = None, weight: tuple[int, int] | None = None,
               league_id: int | None = None, club_history: bool = True, traits: tuple[str, ...] = (),
               foot: int | None = None, weak_foot: int | None = None, skill_moves: int | None = None,
-              reputation: int | None = None, pay_min: int | None = None, pay_max: int | None = None) -> dict:
+              reputation: int | None = None, pay_min: int | None = None, pay_max: int | None = None,
+              physical: tuple[str, ...] = ()) -> dict:
     """선수 검색 (한 번에 최대 200장). 이름만 주면 그 이름이 들어간 선수의 카드 전부. teamcolor_id 면 그 팀컬러가
     적용되는 카드만. skills 는 같이 받을 능력치 칸(STAT_CODES 중 최대 4개). price_max 는 +1 강화 가격 상한(BP).
-    height · weight = (최소, 최대) cm · kg — 같은 OVR 이 200장을 넘을 때 더 잘게 나눠 묻는 데 쓴다.
+    height · weight = (최소, 최대) cm · kg — 상세 검색의 키 · 몸무게, 같은 OVR 이 200장을 넘을 때 더 잘게 나눠 묻는 데도 쓴다.
     조건 검색: league_id · team_id(club_history=True 면 클럽 경력까지) · nation_id · traits(보유 특성 이름 최대 3개) ·
-    foot(FOOT: 1 오른발 · 2 왼발) · weak_foot(약발 1~5) · skill_moves(개인기 별 1~6) · reputation(명성 1~5) · 급여."""
+    foot(FOOT: 1 오른발 · 2 왼발) · weak_foot(약발 1~5) · skill_moves(개인기 별 1~6) · reputation(명성 1~5) · 급여 ·
+    physical(체형 — PHYSICAL 의 이름, 여럿이면 그중 하나)."""
     form = dict.fromkeys(LIST_FIELDS, "")
     form.update({"strPlayerName": name, "n4PageNo": "1", "strOrderby": ORDER_BY.get(order, "")})
     form.update({f"strSkill{i}": code for i, code in enumerate(skills[:4], start=1)})
@@ -384,6 +403,8 @@ def list_form(name: str = "", *, seasons: list[int] | None = None, positions: li
              "n1InterationalRep": reputation, "n4SalaryMin": pay_min, "n4SalaryMax": pay_max}
     form.update({key: str(value) for key, value in extra.items() if value})
     form.update({f"strTrait{i}": trait for i, trait in enumerate(traits[:3], start=1)})
+    if physical:
+        form["strPhysical"] = "," + ",".join(PHYSICAL[p] for p in physical) + ","
     return form
 
 

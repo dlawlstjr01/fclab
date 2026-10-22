@@ -9,12 +9,10 @@ import streamlit as st
 import ui_parts
 from data_prep.nexon_api import FACE_IMAGE
 from data_prep.players import season_short
-from data_prep.tactics import formation_of
 from services.ai import coach
-from services.insights import analyze_user, latest_squad
-from views.common import Ctx, card_basics, friendly_error, get_player, log, open_player, render_sources
-from views.pitch import pitch, pitch_slots, slot_ovrs
-from views.tactics import fill_mine_and_go, share_text
+from services.insights import analyze_user
+from views.common import Ctx, friendly_error, log, open_player, render_sources
+from views.tactics import my_squad
 
 # 넥슨 matchtype 메타데이터 이름 그대로. 친선은 랭커 평균이 없어 공식경기 랭커 평균과 비교한다.
 MATCH_TYPES = {50: "공식경기", 52: "감독모드", 60: "공식 친선", 30: "리그 친선"}
@@ -55,11 +53,6 @@ def _unlink(ctx: Ctx) -> None:
     st.session_state.link_msg = ("info", "계정 연결을 해제했습니다.")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _squad(_ctx, ouid: str) -> dict | None:
-    return latest_squad(_ctx.nexon, _ctx.catalog, ouid)
-
-
 def render(ctx: Ctx) -> None:
     st.markdown('<div class="fc-section">🎮 내 기록<small>넥슨 Open API — 닉네임으로 계정을 연결하면 내 스쿼드 · 최근 경기 · AI 코치를 봅니다</small></div>',
                 unsafe_allow_html=True)
@@ -79,46 +72,9 @@ def render(ctx: Ctx) -> None:
             getattr(st, kind)(text)
 
     if account:
-        try:
-            squad = _squad(ctx, account["ouid"])
-        except Exception as exc:  # noqa: BLE001
-            log.exception("내 스쿼드 실패")
-            squad = None
-            st.caption(friendly_error(exc))
-        if squad:
-            ctx.db.put_gk_games(squad.get("gk_games", []))   # 이미 받은 경기에서 골키퍼 선방 재료도 (추가 호출 없음)
-            st.markdown(f'<div class="fc-section">🧑‍🤝‍🧑 내 스쿼드<small>최근 공식경기 선발 · {squad["match_date"]} · {squad["result"]}</small></div>',
-                        unsafe_allow_html=True)
-            slots = [p["position"] for p in squad["players"]]
-            players = {p["position"]: get_player(ctx, str(p["spid"])) for p in squad["players"]}
-            grades = {p["position"]: p["grade"] for p in squad["players"]}
-            ctx.prefetcher.schedule([p["spid"] for p in squad["players"]])
-            ovrs = slot_ovrs(ctx, slots, players, grades)   # 자리마다 그 포지션의 OVR + 강화 (카드 상세를 받기 전에는 추정 *)
-            basics = card_basics(ctx, [p["spid"] for p in squad["players"]])
-            infos = ctx.cards.get([p["spid"] for p in squad["players"]])
-            prices = {p["position"]: (ctx.market.table(p["spid"]).get(p["grade"]) or {}).get("current")
-                      for p in squad["players"]} if ctx.market.enabled else {}
-            value = sum(v for v in prices.values() if v)
-            extras = {p["position"]: {"pay": basics.get(p["spid"], {}).get("pay"),
-                                      "flag": (infos.get(p["spid"]) or {}).get("nation_flag", ""),
-                                      "price": (f"{ui_parts.bp_short(prices[p['position']])} · "
-                                                f"<b>{share_text(prices[p['position']] / value * 100)}</b>")
-                                      if prices.get(p["position"]) else ""} for p in squad["players"]}
-            pitch_col, side_col = st.columns([1.1, 1], gap="large")
-            with pitch_col:
-                pitch("me_pitch", pitch_slots(slots, players, formation_of(slots), grades, ovrs, extras))
-            with side_col:
-                for p in squad["players"]:
-                    card = players[p["position"]]
-                    ovr, exact = ovrs.get(p["position"], (None, True))
-                    shown = f" · {p['position']} OVR **{ovr}{'' if exact else '*'}**" if ovr else ""
-                    line, btn = st.columns([3, 1], vertical_alignment="center")
-                    line.markdown(f"`{p['position']}` **{escape(card['name'])}** · {escape(card['season_short'])} +{p['grade']}"
-                                  f"{shown} · 평점 {p['rating']:.1f}")
-                    btn.button("상세", key=f"sq_{p['spid']}_{p['position']}", on_click=open_player, args=(str(p["spid"]),),
-                               width="stretch")
-                st.button("🧠 이 스쿼드로 AI 전술 추천", key="sq_tactic", type="primary", width="stretch",
-                          on_click=fill_mine_and_go, args=(ctx,))
+        st.markdown('<div class="fc-section">🧑‍🤝‍🧑 내 스쿼드<small>최근 공식경기 선발 — 스쿼드 메이커처럼 강화 · 특성 · 이미지 · 선수 배치 · '
+                    '끌어서 자리 바꾸기로 고치고 저장합니다</small></div>', unsafe_allow_html=True)
+        my_squad(ctx, account)
 
     st.markdown('<div class="fc-section">📊 최근 경기 분석</div>', unsafe_allow_html=True)
     if account and not st.session_state.get("nickname"):

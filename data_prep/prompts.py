@@ -264,11 +264,12 @@ FIND_SYSTEM = """너는 FC 온라인 선수 검색 도우미다. 사용자가 �
   position(포지션 묶음 하나: 스트라이커 · 윙어 · 공격형 미드필더 · 중앙 미드필더 · 수비형 미드필더 · 풀백 · 센터백 · 골키퍼 ·
   공격수 · 미드필더 · 수비수), legend(레전드 · 은퇴 선수면 true, 현역이면 false, 말이 없으면 null),
   traits(보유 특성 이름 목록), foot(오른발 · 왼발), ability(가장 중요하게 본 능력치 하나: 속력 · 골 결정력 · 드리블 ·
-  짧은 패스 · 시야 · 크로스 · 태클 · 대인 수비 · 헤더 · 몸싸움 · 스태미너 …).
+  짧은 패스 · 시야 · 크로스 · 태클 · 대인 수비 · 헤더 · 몸싸움 · 스태미너 …),
+  teamcolor(수상 · 업적 · 팀컬러를 말했으면 그 말 그대로: 발롱도르 · 트레블 · 황금세대 · 주장 · 갈락티코 1기 · 첼시 팀컬러 …).
 - 조건에 없는 칸은 null. 한국어 이름으로 쓴다.
 
 출력: JSON 객체 하나만. 예) {"nation": "일본", "league": null, "club": null, "position": "미드필더", "legend": null,
-"traits": [], "foot": null, "ability": null}"""
+"traits": [], "foot": null, "ability": null, "teamcolor": null}"""
 
 
 def find_messages(condition: str) -> list[dict]:

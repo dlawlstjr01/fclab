@@ -153,7 +153,13 @@ def render(ctx: Ctx) -> None:
     with set_col:
         picked = card_picker(ctx, key="gr_pick", label="강화할")
     if not picked:
-        out_col.info("왼쪽에서 강화할 카드를 고르세요. 아래 표는 공식 강화 확률입니다.")
+        with out_col:   # 고르기 전에도 같은 자리 — 빈 카드 · 등급 판 · 버튼(누를 수 없음)을 먼저 보여 준다
+            st.markdown(ui_parts.grow_stage(ui_parts.empty_card(), None), unsafe_allow_html=True)
+            st.markdown(ui_parts.grow_board(1, 100.0, 100.0, SUCCESS[1], None, None, False), unsafe_allow_html=True)
+            b1, b2 = st.columns(2)
+            b1.button("⚒️ 한 번 강화", key="gr_try_empty", type="primary", width="stretch", disabled=True)
+            b2.button("🎯 목표까지 강화", key="gr_goal_empty", type="primary", width="stretch", disabled=True)
+            st.caption("왼쪽에서 강화할 선수를 고르면 이 카드에 그 선수가 들어갑니다. 아래 표는 공식 강화 확률입니다.")
         with st.expander("📋 공식 강화 확률표 (26.4 기준)", expanded=True):
             st.markdown(_table_html(), unsafe_allow_html=True)
         return

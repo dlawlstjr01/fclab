@@ -46,6 +46,12 @@ def check(ok: bool, message: str) -> None:
         FAILED.append(message)
 
 
+def num(value: int) -> str:
+    """능력치 숫자 칸 — FC 온라인처럼 값마다 색 이름이 붙는다 ('<b class="o100">104</b>')."""
+    return f'<b class="{ui_parts.stat_class(value)}">{value}</b>'
+
+
+
 # ── 가짜 부품 ─────────────────────────────────────────────────────
 
 class FakeChat:
@@ -579,6 +585,46 @@ found = find_members(fake_finder, Filters(nation="일본"), {866: 3, 101: 2, 300
 check(found["complete"] and fake_finder.asked == [(101, 300, 866), (866,), (101,), (300,)]
       and 101000007 in found["spids"] and 7 in found["pids"],
       "상세 조건 거르기: 한 번에 물어 200장에서 잘리면 카드가 많은 시즌부터 따로 묻는다 (국적 · 클럽 팀컬러는 선수 단위로도 맞춘다)")
+from services.finder import GROUP_CODES, _split, club_label, teamcolor_matches  # noqa: E402
+from services.partners import teamcolor_partners  # noqa: E402
+from views.common import name_parts  # noqa: E402
+
+tcs = [{"id": 40584, "name": "Ballon d'Or", "kind": "시즌"}, {"id": 40193, "name": "네라주리 트레블", "kind": "관계"},
+       {"id": 40191, "name": "바르샤 첫번째 트레블", "kind": "관계"}, {"id": 40022, "name": "갈락티코 1기", "kind": "관계"},
+       {"id": 1, "name": "첼시", "kind": "클럽"}]
+club_opts = {**opts, "teams": {**opts["teams"], "롬바르디아 FC": 2, "밀라노 FC": 3}}
+bdo = parse_rules("발롱도르 받은 선수", club_opts, tcs, {})
+treble = parse_rules("트레블 달성한 공격수", club_opts, tcs, {})
+named = parse_rules("갈락티코 1기 미드필더", club_opts, tcs, {})
+inter = parse_rules("인테르 레전드", club_opts, tcs, {})
+check(bdo.player_teamcolors == ((40584, "Ballon d'Or"),) and bdo.teamcolor is None
+      and {n for _, n in treble.teamcolor_any} == {"네라주리 트레블", "바르샤 첫번째 트레블"}
+      and treble.positions == GROUP_CODES["공격수"] and named.teamcolor == (40022, "갈락티코 1기") and inter.club == "롬바르디아 FC"
+      and club_label("롬바르디아 FC") == "롬바르디아 FC (인테르 · 인터 밀란)" and teamcolor_matches("첼시 선수", tcs) == [],
+      "AI 찾기: 수상 · 업적은 '팀컬러'라는 말 없이도 팀컬러로 ('발롱도르' → Ballon d'Or 카드가 있는 선수의 모든 시즌 카드, "
+      "'트레블' → 트레블 팀컬러 중 하나), "
+      "가명 클럽은 실제 이름으로도 ('인테르' → 롬바르디아 FC) — 클럽 팀컬러는 '팀컬러'라고 할 때만")
+asks = _split(Filters(name="손흥민, 케인", traits_any=("크로스 포쳐", "타이탄"), ovr_min=120, ovr_max=130, grade=8))
+check(len(asks) == 4 and {a_.name for a_ in asks} == {"손흥민", "케인"} and {a_.traits for a_ in asks} == {("크로스 포쳐",), ("타이탄",)}
+      and all(a_.ovr_min == 120 - GRADE_OVR[8] and a_.ovr_max == 130 - GRADE_OVR[8] for a_ in asks)
+      and name_parts(" 손흥민, 케인 ,, 손흥민") == ["손흥민", "케인"],
+      "상세 검색: 쉼표로 적은 이름 × '하나라도' 특성은 따로 물어 합치고, 강화 OVR 범위(8강 120~130)는 +1 OVR 로 바꿔 묻는다")
+form = dcmod.list_form(physical=("마름", "건장(고유)"), height=(170, 185), ovr_max=110)
+check(form["strPhysical"] == ",1,4,7,13," and form["n4HeightMin"] == "170" and form["n4OvrMax"] == "110"
+      and dcmod.trait_icon("주발 선호").endswith("trait_icon_06.png") and dcmod.trait_icon("타이탄").endswith("_64.png"),
+      "상세 검색 → 데이터센터 검색 폼: 체형(마름 · 건장(고유)) · 키 범위 · OVR 상한, 특성 아이콘 번호는 두 자리 (trait_icon_06)")
+mates = teamcolor_partners({"spid": 101000007, "pid": 7}, "LW",
+                           [{"spid": 101000007, "name": "본인", "ovr": 130, "positions": [("LW", 130)]},
+                            {"spid": 300000008, "name": "중앙", "ovr": 128, "positions": [("CAM", 128)]},
+                            {"spid": 300000009, "name": "반대쪽", "ovr": 120, "positions": [("RW", 120)]},
+                            {"spid": 850000009, "name": "반대쪽", "ovr": 125, "positions": [("RW", 125)]}])
+check([m_["spid"] for m_ in mates] == [850000009, 300000008] and mates[0]["pair"] and not mates[1]["pair"],
+      "짝 추천(팀컬러): 같은 팀컬러 카드 중 선수마다 OVR 가장 높은 한 장, 본인은 빼고, 짝 자리(LW → RW)가 먼저")
+legend_league = finder._variants(Filters(league="잉글랜드 프리미어리그", legend=True, positions=("CB",)))
+check([(v.club, v.club_history, v.league) for v in legend_league] == [("아스널", True, None)]
+      and finder._variants(Filters(league="잉글랜드 프리미어리그")) == [Filters(league="잉글랜드 프리미어리그")],
+      "AI 찾기: '프리미어리그 레전드' — 리그는 지금 소속이라 은퇴한 레전드가 없어, 그 리그 클럽마다 클럽 경력으로 묻는다 "
+      "(현역 조건은 그대로 리그로)")
 tc_level = {"level": 4, "count": 11, "effects": ["전체 능력치 +4", "볼 컨트롤 +3"]}
 enh_level = {"level": 2, "count": 8, "effects": ["전체 능력치 +4"]}
 cond = {"grade": 5, "enh_min": 8, "enh": {"name": "금빛 물결"}, "enh_level": enh_level, "tc": {"name": "첼시"},
@@ -596,7 +642,7 @@ check(len(set(widths)) >= 5 and widths[-1] < widths[-3],
       f"비교 막대: 묶음마다 같은 눈금으로 값마다 길이가 다르다 — 이긴 쪽끼리도 (가속력 125 < 속력 129) {widths}")
 row = ui_parts.card_row({"name": "가", "player_id": "1"}, {"summary": {"스피드": 100, "패스": 90}}, grade=1,
                         tc_summary={"패스": 5})
-check('<span>패스 <b class="up" title="팀컬러 +5">95</b>' in row and "<span>스피드 <b>100</b>" in row,
+check('<span>패스 <b class="up" title="팀컬러 +5">95</b>' in row and f"<span>스피드 {num(100)}" in row,
       "선수 줄: 팀컬러로 오른 요약 능력치(특정 능력치 효과 포함)는 더해서 초록으로")
 chelsea = ("첼시", 4, ["전체 능력치 +4", "볼 컨트롤 +3", "크로스 +3"])
 line = applied_html({"groups": {"소속": [{"name": chelsea[0], "level": 4, "count": 11, "effects": chelsea[2], "icon": ""}],
@@ -849,12 +895,12 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     def cmp_html() -> str:
         return next((m.value for m in at.markdown if 'class="fc-abcmp"' in m.value), "")
 
-    check('<div class="b win">' in cmp_html() and "<b>104</b>" in cmp_html() and "<b>100</b>" in cmp_html(),
+    check('<div class="b win">' in cmp_html() and num(104) in cmp_html() and num(100) in cmp_html(),
           "비교: 카드 능력치 나란히 — 처음은 +1강 (대표 OVR 100 vs 104, 높은 쪽에 색 · 막대는 차이만큼 짧게)")
     at.button(key=f"pc_grade_{a['spid']}__8").click().run()
     at.selectbox(key=f"pc_adapt_{b['spid']}").select(5).run()
-    check(not at.exception and f"<b>{100 + GRADE_OVR[8]}</b>" in cmp_html()
-          and '<b>108</b>' in cmp_html() and '<b>108</b><small class="up">' not in cmp_html() and '<div class="a win">' in cmp_html(),
+    check(not at.exception and num(100 + GRADE_OVR[8]) in cmp_html()
+          and num(108) in cmp_html() and num(108) + '<small class="up">' not in cmp_html() and '<div class="a win">' in cmp_html(),
           f"비교: A 를 8강 → 대표 OVR {100 + GRADE_OVR[8]}, B 를 적응도 5 → 108 (적응도는 숫자에만 · 초록 +N 은 팀컬러) "
           "— 카드마다 강화 · 적응도 · 팀컬러를 골라 비교")
     at.button(key="make_compare").click().run()
@@ -971,7 +1017,7 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
           f"스쿼드 {img_code} 이미지 고르기 → 그 액션샷으로 ('✓ 사용 중'), 기본으로 되돌릴 수 있다")
     at.button(key=f"tac_img_{img_code}_0").click().run()
     row_html = next(m.value for m in at.markdown if 'class="fc-prow compact"' in m.value and f"{code} OVR" in m.value)
-    check('class="meta"' in row_html and '<span>스피드 <b>' in row_html and 'class="side"><div class="ovr">' in row_html,
+    check('class="meta"' in row_html and '<span>스피드 <b class="o' in row_html and 'class="side"><div class="ovr">' in row_html,
           "스쿼드 자리별 줄: 시즌 · 급여 · 강화 · 주발은 덩어리째 줄바꿈, 능력치는 '이름 숫자'가 갈라지지 않게, 오른쪽은 OVR 만")
     at.text_input(key="tac_save_name").input("점검 스쿼드").run()
     at.button(key="tac_save").click().run()
@@ -1001,33 +1047,33 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
 
     check(grid_html() != "", "선수 상세: 카드 정보 — 포지션별 오버롤 (받아 둔 상세)")
     at.button(key=f"pc_grade_{spid_t}__8").click().run()
-    check(f"<b>{90 + GRADE_OVR[8]}</b>" in grid_html() and 'class="up"' not in grid_html()
+    check(num(90 + GRADE_OVR[8]) in grid_html() and 'class="up"' not in grid_html()
           and at.selectbox(key=f"pc_adapt_{spid_t}").options == ["+1", "+5"],
           f"선수 상세: 강화만 8강으로 → 포지션 OVR 90+{GRADE_OVR[8]}, 초록 +N 없음 (강화분은 숫자에) · 적응도는 1 · 5 두 단계만")
     at.selectbox(key=f"pc_adapt_{spid_t}").select(5).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4}</b>" in grid_html() and 'class="up"' not in grid_html(),
+    check(num(90 + GRADE_OVR[8] + 4) in grid_html() and 'class="up"' not in grid_html(),
           f"선수 상세: 적응도 5 → 포지션 OVR 90+{GRADE_OVR[8]}+4, 초록 +N 없음 (적응도는 능력치 숫자에만)")
     enh = at.selectbox(key=f"pc_enh_{spid_t}_8")
     enh.select_index(next(i for i, label in enumerate(enh.options) if "금빛 물결 Lv.2" in label)).run()
-    check(f"<b>{90 + GRADE_OVR[8] + 4 + 4}</b>" in grid_html() and 'class="up">+4<' in grid_html()
+    check(num(90 + GRADE_OVR[8] + 4 + 4) in grid_html() and 'class="up">+4<' in grid_html()
           and 'class="up">+8<' not in grid_html() and any("금빛 Lv.2 +8" in c.value for c in at.caption),
           f"선수 상세: 거기에 금빛 물결 Lv.2 → OVR {90 + GRADE_OVR[8] + 8} (데이터센터 기본값 +8 과 같다), 초록 +4 = 팀컬러만 "
           "(적응도는 숫자에만)")
 
     def ability_html() -> str:
-        return next((m.value for m in at.markdown if 'class="fc-abil"' in m.value), "")
+        return next((m.value for m in at.markdown if 'class="fc-abil flow"' in m.value), "")
 
     at.selectbox(key=f"pc_tc_{spid_t}").select_index(1).run()
     short = 80 + GRADE_OVR[8] + 4 + 4 + 3
     check(f">{short}</b><small class=\"up\">+{short - 80 - GRADE_OVR[8] - 4}<" in ability_html()
-          and f"<b>{90 + GRADE_OVR[8] + 8}" in grid_html() and 'class="it focus" title="팀컬러가 따로 올려 주는 능력치 +3"' in ability_html(),
+          and num(90 + GRADE_OVR[8] + 8) in grid_html() and 'class="it focus" title="팀컬러가 따로 올려 주는 능력치 +3"' in ability_html(),
           f"선수 상세: 소속 팀컬러 '짧은 패스 +3' → 짧은 패스 {short}, 초록 +{short - 80 - GRADE_OVR[8] - 4} = 금빛 4 + 소속 3 "
           "(특정 능력치만 오르는 효과도 그 능력치의 +N 에, 적응도는 숫자에만)")
     check(any('★★★★<span class="star-up"' in m.value and ">★★</span>" in m.value for m in at.markdown),
           "선수 상세: 개인기 4성 카드를 8강으로 → 5 · 8강 별 2개를 초록으로 더해 6성")
     check(any('class="fc-qa-head"' in m.value for m in at.markdown), "선수 상세: Q&A · AI 리포트 · 근거 문서를 눈에 띄는 상자로 (제목 · 근거 기반 표시)")
     at.button(key=f"pc_reset_{spid_t}").click().run()
-    check(f"<b>{90 + GRADE_OVR[1]}</b>" in grid_html() and 'class="up"' not in grid_html(),
+    check(num(90 + GRADE_OVR[1]) in grid_html() and 'class="up"' not in grid_html(),
           "선수 상세: ↺ 초기화 → +1강 · 적응도 1 · 팀컬러 없음")
     at.session_state["page"] = "tactics"   # 스쿼드로 돌아가 AI 전술 추천
     at.run()

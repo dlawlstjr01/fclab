@@ -16,7 +16,8 @@ import ui_parts
 from data_prep.enhance import skill_stars
 from data_prep.prompts import TASK_LABELS
 from services.ai import general_answer, scout_line
-from services.partners import pair_plan, recommend, solo_share, solo_text, SOLO_SHARE
+from services.finder import Filters
+from services.partners import pair_plan, recommend, solo_share, solo_text, teamcolor_partners, SOLO_SHARE
 from services.cardinfo import bonus_stats
 from services.insights import percentiles, position_usage, trade_prices
 from services.teamcolor import effect_bonus, enhance_details
@@ -63,13 +64,57 @@ def _card_section(ctx: Ctx, player: dict) -> None:
 
 
 def _partner_section(ctx: Ctx, player: dict) -> None:
-    """🤝 짝 추천 — 이 카드를 자기 포지션에 쓸 때 옆(가운데 자리) · 반대쪽(측면)에 둘 카드. 골키퍼는 한 명이라 없다.
-    랭커가 그 자리에 많이 쓰는 카드(데일리 차트) 중 이 카드의 약한 능력치를 메워 주는 카드, 혼자 쓰는 자리면 그렇다고 적는다.
-    데일리 차트를 받지 못하면(데이터센터가 꺼졌거나 실패) 랭커 분석 카드(넥슨 Open API 기록)에서 고른다 — 칸이 비지 않게."""
+    """🤝 짝 추천 — 이 선수의 팀컬러(소속 · 관계)마다, 같은 팀컬러를 가진 선수 중에서 같이 쓸 카드 (팀컬러를 맞추며 짝을 찾게).
+    팀컬러를 고르면 그 팀컬러가 적용되는 카드(데이터센터 선수 검색)에서 선수마다 OVR 이 가장 높은 카드 한 장 —
+    이 카드의 짝 자리(반대쪽 측면 · 같은 줄의 다른 한 명)에 서는 카드가 먼저, 그다음 다른 자리 (services/partners.teamcolor_partners).
+    팀컬러가 없는 카드 · 데이터센터가 꺼졌을 때는 랭커가 짝 자리에 많이 쓰는 카드에서 고른다 (_usage_partners)."""
     info = ctx.cards.get([player["spid"]]).get(player["spid"]) or {}
     basics = card_basics(ctx, [player["spid"]]).get(player["spid"], {})
     ranker_position = (player.get("ranker") or {}).get("position")
     position = info.get("position") or basics.get("position") or ranker_position or next(iter(player.get("positions") or []), None)
+    teamcolors, seen = [], set()
+    for kind in ("소속", "관계"):   # 이름이 같은 팀컬러(갈래만 다른 것)는 한 번만
+        for tc in (info.get("teamcolors") or {}).get(kind, []):
+            if tc["name"] not in seen:
+                seen.add(tc["name"])
+                teamcolors.append((kind, tc))
+    if not teamcolors or not ctx.finder.enabled:
+        _usage_partners(ctx, player, info, position)
+        return
+    plan = pair_plan(position)
+    where = (f"짝 자리 {plan['partner']}(반대쪽) 먼저" if plan and plan["kind"] == "mirror"
+             else f"짝 자리 {plan['group']}(같은 줄의 다른 한 명) 먼저" if plan else "OVR 높은 순")
+    st.markdown(f'<div class="fc-section">🤝 짝 추천 — 같은 팀컬러를 가진 선수<small>이 선수의 팀컬러마다 · {escape(where)} · '
+                '선수마다 OVR 이 가장 높은 카드</small></div>', unsafe_allow_html=True)
+    labels = {tc["id"]: f"{tc['name']} · {kind}" for kind, tc in teamcolors}
+    key = f"pair_tc_{player['spid']}"
+    if st.session_state.get(key) not in labels:
+        st.session_state[key] = next(iter(labels))
+    picked = st.pills("팀컬러", list(labels), key=key, format_func=labels.get, label_visibility="collapsed") or next(iter(labels))
+    tc = next(tc for _, tc in teamcolors if tc["id"] == picked)
+    try:
+        with st.spinner(f"'{tc['name']}' 팀컬러 카드를 데이터센터에서 찾는 중… (하루 동안 바로)"):
+            rows = ctx.finder.search(Filters(teamcolor=(tc["id"], tc["name"])))
+    except Exception as exc:  # noqa: BLE001
+        log.exception("팀컬러 짝 검색 실패")
+        st.caption(friendly_error(exc))
+        return
+    picks = teamcolor_partners({"spid": player["spid"], "pid": player["pid"]}, position, rows)
+    if not picks:
+        st.caption(f"'{tc['name']}' 팀컬러를 가진 다른 선수가 없습니다.")
+        return
+    shown = [get_player(ctx, str(p["spid"])) for p in picks]
+    reasons = {s["player_id"]: (f"짝 자리 {p['position']}" if p["pair"] else f"{p['position'] or '-'}") + f" · {tc['name']}"
+               for s, p in zip(shown, picks)}
+    tile_grid(ctx, shown, key=f"pair{picked}", cols=6, reasons=reasons)
+    st.caption(f"'{tc['name']}' 팀컬러가 적용되는 카드 {len(rows)}장{' (OVR 높은 순 200장까지)' if len(rows) >= 200 else ''} 중 "
+               f"{len({r['spid'] % 1_000_000 for r in rows} - {player['pid']})}명 — 팀컬러를 바꿔 다른 짝을 보세요.")
+
+
+def _usage_partners(ctx: Ctx, player: dict, info: dict, position: str | None) -> None:
+    """팀컬러로 짝을 찾지 못할 때 — 이 카드를 자기 포지션에 쓸 때 옆(가운데 자리) · 반대쪽(측면)에 둘 카드. 골키퍼는 없다.
+    랭커가 그 자리에 많이 쓰는 카드(데일리 차트) 중 이 카드의 약한 능력치를 메워 주는 카드, 혼자 쓰는 자리면 그렇다고 적는다.
+    데일리 차트를 받지 못하면(데이터센터가 꺼졌거나 실패) 랭커 분석 카드(넥슨 Open API 기록)에서 고른다 — 칸이 비지 않게."""
     plan = pair_plan(position)
     if plan is None:   # 골키퍼 (혼자 서는 자리)
         return
@@ -271,6 +316,8 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
         ("키 · 몸무게", f'<b class="txt">{escape(info.get("height", ""))} · {escape(info.get("weight", ""))}</b> '
                       f'<small>{escape(info.get("body", ""))}</small>'),
         ("국적 · 명성", f'<b class="txt">{escape(info.get("nation", "") or "-")}</b> <small>{escape(info.get("reputation", ""))}</small>'),
+        ("생성 제한", f'<b class="txt">{escape(restriction_text(player.get("season", "")))}</b> '
+                    f'<small>{"귀속 시즌 — 이적시장 거래 불가" if "(제한)" in player.get("season", "") or "Bound" in player.get("season", "") else "이적시장 거래 · 생성 가능"}</small>'),
     ]
     st.markdown('<div class="fc-sum">' + "".join(f"<div><span>{k}</span>{v}</div>" for k, v in cells) + "</div>",
                 unsafe_allow_html=True)

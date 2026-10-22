@@ -79,7 +79,10 @@ export default function(component) {
     ` style="left:${s.x}%;top:${s.y}%">${s.html}</div>`).join("");
   root.innerHTML = `<div class="mark box top"></div><div class="mark box bottom"></div><div class="mark mid"></div>` +
                    `<div class="mark circle"></div>${zones}${slots}`;
-  if (data.readonly) return;
+  // 끌지 않고 누르면 그 선수 상세로 (빈 자리는 빼고)
+  const open = (slot) => { if (data.clickable && !slot.querySelector(".empty")) setTriggerValue("clicked", { code: slot.dataset.code, at: Date.now() }); };
+  if (data.readonly) { root.querySelectorAll(".slot").forEach((s) => s.addEventListener("click", () => open(s))); return; }
+  root.querySelectorAll(".slot.locked").forEach((s) => s.addEventListener("click", () => open(s)));
   const occupied = new Set(data.slots.map((s) => s.code));
   // 놓일 포지션 — 점을 품은 구역 중 중심이 가장 가까운 것, 없으면 가장 가까운 구역 (골키퍼 자리 · 센터백 없는 스위퍼는 빼고)
   const zoneAt = (x, y) => {
@@ -120,6 +123,7 @@ export default function(component) {
         } else {
           slot.style.left = slot.dataset.x + "%";
           slot.style.top = slot.dataset.y + "%";
+          if (!moved) open(slot);
         }
       };
       slot.addEventListener("pointermove", move);
@@ -163,7 +167,7 @@ def pitch_slots(codes: list[str], squad: dict[str, dict | None], formation: str 
         if p:
             extra = (extras or {}).get(code, {})
             html = ui_parts.pitch_card(extra.get("player") or p, code, ovr, exact, grade, extra.get("pay"), extra.get("trait"),
-                                       extra.get("flag", ""), extra.get("price", ""))
+                                       extra.get("flag", ""), extra.get("price", ""), nation=extra.get("nation", ""))
         else:
             html = f'<div class="empty">{escape(code)}</div><div class="ps">비어 있음</div>'
         head = f"{ovr}{'' if exact else '*'} · " if ovr else ""
@@ -172,8 +176,9 @@ def pitch_slots(codes: list[str], squad: dict[str, dict | None], formation: str 
     return out
 
 
-def pitch(key: str, slots: list[dict], on_move=None) -> None:
-    """경기장. on_move 가 있으면 카드를 끌어 옮길 수 있다 (없으면 보기만 — 내 기록 · AI 추천 결과)."""
+def pitch(key: str, slots: list[dict], on_move=None, on_open=None) -> None:
+    """경기장. on_move 가 있으면 카드를 끌어 옮길 수 있다 (없으면 보기만 — AI 추천 결과). on_open 이 있으면 끌지 않고 누른
+    카드의 선수 상세로 — on_open 안에서 clicked(key) 로 누른 자리를 읽는다."""
     component = browser_component("fclab_pitch", css=PITCH_CSS, js=PITCH_JS)
     if component is None:   # 런타임 없이 — 같은 그림을 HTML 로 (끌기 없음)
         marks = ('<div class="mark box top"></div><div class="mark box bottom"></div><div class="mark mid"></div>'
@@ -181,11 +186,14 @@ def pitch(key: str, slots: list[dict], on_move=None) -> None:
         body = "".join(f'<div class="slot locked" style="left:{s["x"]}%;top:{s["y"]}%">{s["html"]}</div>' for s in slots)
         st.markdown(f"<style>{PITCH_CSS}</style><div class='fc-pitch2'>{marks}{body}</div>", unsafe_allow_html=True)
         return
-    data = {"slots": slots, "zones": _zones(), "readonly": on_move is None}
-    if on_move is None:
-        component(key=key, data=data)
-    else:
-        component(key=key, data=data, on_moved_change=on_move)
+    data = {"slots": slots, "zones": _zones(), "readonly": on_move is None, "clickable": on_open is not None}
+    handlers = {"on_moved_change": on_move, "on_clicked_change": on_open}
+    component(key=key, data=data, **{name: fn for name, fn in handlers.items() if fn is not None})
+
+
+def clicked(key: str) -> str | None:
+    """방금 누른 자리 (끌지 않고 누른 카드) — on_open 콜백 안에서 부른다."""
+    return ((st.session_state.get(key) or {}).get("clicked") or {}).get("code")
 
 
 def dropped(key: str) -> tuple[str, float, float] | None:

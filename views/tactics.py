@@ -15,27 +15,31 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime
+from functools import partial
 from html import escape
 
 import streamlit as st
 
 import ui_parts
-from data_prep.datacenter import NEW_TRAIT_ICONS, TRAIT_ICON
+from data_prep.datacenter import NEW_TRAIT_ICONS, TRAIT_ICON, USAGE_GROUP
 from data_prep.enhance import GRADE_OVR
 from data_prep.market import bp
 from data_prep.nexon_api import ACTION_IMAGE
 from data_prep.players import GROUP_OF, is_live_season, season_short, stat_values
 from data_prep.tactics import (BASE_POSITION, FORMATION_GROUPS, FORMATIONS, LINE, PLAY_STYLES, TEAM_TACTICS, formation_of,
-                               position_at, slot_xy)
+                               ovr_at, position_at, slot_xy)
 from services.ai import recommend_tactics
 from services.cardinfo import bonus_stats
+from services.finder import Filters
 from services.insights import latest_squad
 from services.squad import MODE_NAMES, PAY_CAP, SquadAdvisor, explain
 from services.teamcolor import GROUPS, effect_bonus, enhance_details, squad_teamcolors
-from views.common import (Ctx, by_ovr, crests_of, dialog_open, enrich_many, friendly_error, get_player, go, log,
-                          render_sources)
-from views.pitch import dropped, pitch, pitch_slots, slot_ovrs
+from views.common import (Ctx, by_ovr, crests_of, dialog_open, enrich_many, friendly_error, get_player, go, log, name_parts,
+                          open_player, render_sources, search_players)
+from views.filters import detail_panel, preset as preset_filters, reset as reset_filters
+from views.pitch import clicked, dropped, pitch, pitch_slots, slot_ovrs
 from views.widgets import card_picker, card_tiles, grade_buttons
 
 ATTACK = {"스트라이커", "윙어", "공격형 미드필더"}
@@ -59,18 +63,19 @@ def _score(p: dict) -> float:
     return v["assist"] + v["pass_rate"] / 50
 
 
-# ── 스쿼드 상태 ── tac_formation: 포메이션 이름 또는 '사용자 지정', tac_squad: {포지션: {pid, grade} 또는 None} ──
+# ── 스쿼드 상태 ── {ns}_formation: 포메이션 이름 또는 '사용자 지정', {ns}_squad: {포지션: {pid, grade} 또는 None} ──
+# ns 는 스쿼드마다의 이름 — 'tac' = 스쿼드 메이커, 'me' = 🎮 내 기록의 내 스쿼드 (같은 화면 · 같은 편집, 상태만 따로)
 
-def _squad() -> dict[str, dict | None]:
-    return st.session_state.tac_squad
+def _squad(ns: str = "tac") -> dict[str, dict | None]:
+    return st.session_state[f"{ns}_squad"]
 
 
-def _codes() -> list[str]:
+def _codes(ns: str = "tac") -> list[str]:
     """지금 자리들 — 포메이션 순서, 사용자 지정이면 골키퍼 → 수비 → 미드 → 공격, 같은 줄은 왼쪽부터."""
-    formation = st.session_state.tac_formation
+    formation = st.session_state[f"{ns}_formation"]
     if formation in FORMATIONS:
         return FORMATIONS[formation]
-    return sorted(_squad(), key=lambda c: (LINE[c], slot_xy(c, None)[1]))
+    return sorted(_squad(ns), key=lambda c: (LINE[c], slot_xy(c, None)[1]))
 
 
 def list_order(codes: list[str], formation: str | None) -> list[str]:
@@ -79,15 +84,19 @@ def list_order(codes: list[str], formation: str | None) -> list[str]:
     return sorted(codes, key=lambda c: (-LINE[c], slot_xy(c, layout)[1]))
 
 
-def _set(formation: str | None, squad: dict[str, dict | None]) -> None:
-    st.session_state.tac_formation = formation or CUSTOM
-    st.session_state.tac_squad = squad
-    st.session_state.tac_formation_pick = formation or CUSTOM
+def _set(formation: str | None, squad: dict[str, dict | None], ns: str = "tac") -> None:
+    st.session_state[f"{ns}_formation"] = formation or CUSTOM
+    st.session_state[f"{ns}_squad"] = squad
+    st.session_state[f"{ns}_formation_pick"] = formation or CUSTOM
 
 
-def _remap(codes: list[str]) -> dict[str, dict | None]:
+def _msg(ns: str, text: str | None) -> None:
+    st.session_state[f"{ns}_msg"] = text
+
+
+def _remap(codes: list[str], ns: str = "tac") -> dict[str, dict | None]:
     """새 포메이션 자리에 지금 선수들을 옮겨 앉힌다 — 같은 포지션은 그대로, 나머지는 같은 포지션 그룹 → 가까운 줄 · 가까운 쪽."""
-    left = {c: v for c, v in _squad().items() if v}
+    left = {c: v for c, v in _squad(ns).items() if v}
     new = {c: left.pop(c, None) for c in codes}
     for code in codes:
         if new[code] is None and left:
@@ -97,24 +106,24 @@ def _remap(codes: list[str]) -> dict[str, dict | None]:
     return new
 
 
-def _on_formation() -> None:
-    picked = st.session_state.tac_formation_pick
-    if picked in FORMATIONS and picked != st.session_state.tac_formation:
-        _set(picked, _remap(FORMATIONS[picked]))
-        st.session_state.tac_msg = None
+def _on_formation(ns: str = "tac") -> None:
+    picked = st.session_state[f"{ns}_formation_pick"]
+    if picked in FORMATIONS and picked != st.session_state[f"{ns}_formation"]:
+        _set(picked, _remap(FORMATIONS[picked], ns), ns)
+        _msg(ns, None)
 
 
-def _on_drop() -> None:
+def _on_drop(ns: str = "tac") -> None:
     """경기장에서 끌어 놓았다 — 그 자리의 포지션으로 (선수가 있으면 둘이 자리를 바꾼다) → 포메이션을 다시 찾는다."""
-    drop = dropped("tac_pitch")
-    squad = _squad()
+    drop = dropped(f"{ns}_pitch")
+    squad = _squad(ns)
     if not drop or drop[0] not in squad or drop[0] == "GK":
         return
     source, top, left = drop
     target = position_at(top, left, set(squad) - {source})
     if target in ("GK", source):
         return
-    before = st.session_state.tac_formation
+    before = st.session_state[f"{ns}_formation"]
     if target in squad:
         squad[source], squad[target] = squad[target], squad[source]
         message = f"🔁 {source} ↔ {target} — 두 선수의 자리를 바꿨습니다."
@@ -122,25 +131,25 @@ def _on_drop() -> None:
         squad[target] = squad.pop(source)
         message = f"↪️ {source} → {target} 로 옮겼습니다 (OVR 도 {target} 기준으로 바뀝니다)."
     formation = formation_of(list(squad), prefer=before)
-    _set(formation, squad)
+    _set(formation, squad, ns)
     if (formation or CUSTOM) != before:
         message += f" 포메이션이 {before} → **{formation or CUSTOM}** 로 바뀌었습니다."
-    st.session_state.tac_msg = message
+    _msg(ns, message)
 
 
-def _fill_power(ctx: Ctx) -> None:
+def _fill_power(ctx: Ctx, ns: str = "tac") -> None:
     """자리마다 같은 포지션 그룹에서 랭커 기록이 가장 좋은 카드 (같은 선수는 한 번만)."""
     used: set[int] = set()
     squad = {}
-    for code in _codes():
+    for code in _codes(ns):
         pool = [p for p in ctx.players if p.get("position_group") == GROUP_OF.get(code) and p.get("ranker")
                 and p["ranker"]["match_count"] >= 10 and p["pid"] not in used]
         best = max(pool, key=_score, default=None)
         squad[code] = {"pid": best["player_id"], "grade": None} if best else None
         if best:
             used.add(best["pid"])
-    st.session_state.tac_squad = squad
-    st.session_state.tac_msg = "⚡ 자리마다 랭커 기록이 가장 좋은 카드로 채웠습니다."
+    st.session_state[f"{ns}_squad"] = squad
+    _msg(ns, "⚡ 자리마다 랭커 기록이 가장 좋은 카드로 채웠습니다.")
 
 
 def fill_mine_and_go(ctx: Ctx) -> None:
@@ -150,103 +159,99 @@ def fill_mine_and_go(ctx: Ctx) -> None:
     go("tactics")
 
 
-def _fill_mine(ctx: Ctx) -> None:
+def _fill_mine(ctx: Ctx, ns: str = "tac") -> None:
     """연결한 계정의 최근 공식경기 선발 → 그 포지션 · 강화 그대로 (맞는 포메이션이 없으면 사용자 지정)."""
     account = ctx.db.account()
     if not account:
-        st.session_state.tac_msg = "🎮 내 기록에서 닉네임으로 계정을 먼저 연결하세요."
+        _msg(ns, "🎮 내 기록에서 닉네임으로 계정을 먼저 연결하세요.")
         return
     try:
         squad = latest_squad(ctx.nexon, ctx.catalog, account["ouid"])
     except Exception as exc:  # noqa: BLE001
         log.exception("내 스쿼드 불러오기 실패")
-        st.session_state.tac_msg = friendly_error(exc)
+        _msg(ns, friendly_error(exc))
         return
     if not squad:
-        st.session_state.tac_msg = "최근 공식경기에서 선발 11명을 찾지 못했습니다."
+        _msg(ns, "최근 공식경기에서 선발 11명을 찾지 못했습니다.")
         return
     ctx.db.put_gk_games(squad["gk_games"])   # 이미 받은 경기에서 골키퍼 선방 재료도 남긴다 (추가 호출 없음)
     mine = {p["position"]: {"pid": str(p["spid"]), "grade": p["grade"]} for p in squad["players"] if p["position"] in LINE}
     formation = formation_of(list(mine))
-    _set(formation, mine)
+    _set(formation, mine, ns)
     ctx.prefetcher.schedule([p["spid"] for p in squad["players"]])
-    st.session_state.tac_msg = (f"🎮 {account['nickname']}의 최근 공식경기({squad['match_date']}, {squad['result']}) 선발을 "
-                                f"불러왔습니다 → 포메이션 {formation or CUSTOM}")
+    _msg(ns, f"🎮 {account['nickname']}의 최근 공식경기({squad['match_date']}, {squad['result']}) 선발을 "
+             f"불러왔습니다 → 포메이션 {formation or CUSTOM}")
 
 
-def _clear() -> None:
-    st.session_state.tac_squad = {code: None for code in _codes()}
-    st.session_state.tac_msg = None
-
-
-def _apply(code: str, pick_key: str) -> None:
-    spid = st.session_state.get(f"{pick_key}_card")
-    if spid:
-        _squad()[code] = {"pid": str(spid), "grade": st.session_state.get(f"{pick_key}_grade") or 1}
+def _clear(ns: str = "tac") -> None:
+    st.session_state[f"{ns}_squad"] = {code: None for code in _codes(ns)}
+    _msg(ns, None)
 
 
 NO_TRAIT, OWN_IMAGE = "없음", 0   # 고르기 칸의 '없음' · '기본 이미지' (None 이면 칸이 비어 보인다)
 
 
-def _set_field(code: str, field: str, key: str) -> None:
+def _set_field(code: str, field: str, key: str, ns: str = "tac") -> None:
     """자리 선수의 강화(grade) · 보유 신규 특성(trait) · 선수 이미지(img = 그 이미지를 쓰는 카드 spid)를 바꾼다."""
-    if _squad().get(code):
+    if _squad(ns).get(code):
         value = st.session_state[key]
-        _squad()[code][field] = None if value in (NO_TRAIT, OWN_IMAGE) else value
+        _squad(ns)[code][field] = None if value in (NO_TRAIT, OWN_IMAGE) else value
 
 
-def _reset_slot(code: str) -> None:
+def _reset_slot(code: str, ns: str = "tac") -> None:
     """이 자리 선수의 강화 · 보유 신규 특성 · 선수 이미지를 처음으로 (선수는 그대로)."""
-    if _squad().get(code):
-        _squad()[code].update(grade=None, trait=None, img=None)
+    if _squad(ns).get(code):
+        _squad(ns)[code].update(grade=None, trait=None, img=None)
 
 
-def _reset_all() -> None:
+def _reset_all(ns: str = "tac") -> None:
     """모든 선수의 강화 · 보유 신규 특성 · 선수 이미지를 처음으로 (선수 · 포메이션은 그대로)."""
-    for code, entry in _squad().items():
+    for code, entry in _squad(ns).items():
         if entry:
-            _reset_slot(code)
-    st.session_state.tac_msg = "↺ 모든 선수의 강화 · 보유 신규 특성 · 선수 이미지를 처음으로 되돌렸습니다 (선수는 그대로)."
+            _reset_slot(code, ns)
+    _msg(ns, "↺ 모든 선수의 강화 · 보유 신규 특성 · 선수 이미지를 처음으로 되돌렸습니다 (선수는 그대로).")
 
 
-def _ensure_state(ctx: Ctx) -> None:
-    if "tac_squad" not in st.session_state:   # 처음에는 빈 스쿼드 — 채우기는 '⚡ 파워 랭킹 추천' · '🎮 내 스쿼드' · 자리마다 '➕ 추가'로
-        st.session_state.tac_formation = "4-2-3-1"
-        st.session_state.tac_squad = {code: None for code in FORMATIONS["4-2-3-1"]}
-    st.session_state.setdefault("tac_formation_pick", st.session_state.tac_formation)
+def _ensure_state(ctx: Ctx, ns: str = "tac") -> None:
+    if f"{ns}_squad" not in st.session_state:   # 처음에는 빈 스쿼드 — 채우기는 '⚡ 파워 랭킹 추천' · '🎮 내 스쿼드' · 자리마다 '➕ 추가'로
+        st.session_state[f"{ns}_formation"] = "4-2-3-1"
+        st.session_state[f"{ns}_squad"] = {code: None for code in FORMATIONS["4-2-3-1"]}
+    st.session_state.setdefault(f"{ns}_formation_pick", st.session_state[f"{ns}_formation"])
 
 
 # ── 저장 · 불러오기 ─────────────────────────────────────────────
 
-def _save(ctx: Ctx) -> None:
-    name = (st.session_state.get("tac_save_name") or "").strip() or f"스쿼드 {datetime.now():%m-%d %H:%M}"
-    ctx.db.save_squad(name, {"formation": st.session_state.tac_formation, "squad": _squad(),
+def _save(ctx: Ctx, ns: str = "tac") -> None:
+    name = (st.session_state.get(f"{ns}_save_name") or "").strip() or f"스쿼드 {datetime.now():%m-%d %H:%M}"
+    ctx.db.save_squad(name, {"formation": st.session_state[f"{ns}_formation"], "squad": _squad(ns),
                              "style": st.session_state.get("tac_style")})
-    st.session_state.tac_save_name = ""
-    st.session_state.tac_msg = f"💾 '{name}' 이름으로 저장했습니다. '💾 저장 · 불러오기'에서 언제든 다시 불러올 수 있습니다."
+    st.session_state[f"{ns}_save_name"] = ""
+    _msg(ns, f"💾 '{name}' 이름으로 저장했습니다. '💾 저장 · 불러오기'에서 언제든 다시 불러올 수 있습니다 "
+             "(스쿼드 메이커 · 내 기록 어디서나).")
 
 
-def _load(ctx: Ctx, name: str) -> None:
+def _load(ctx: Ctx, name: str, ns: str = "tac") -> None:
     saved = next((s for s in ctx.db.squads() if s["name"] == name), None)
     if not saved:
         return
     data = saved["data"]
     formation = data.get("formation")
-    _set(formation if formation in FORMATIONS else None, {code: entry for code, entry in data["squad"].items() if code in LINE})
-    if data.get("style") in PLAY_STYLES:
+    _set(formation if formation in FORMATIONS else None,
+         {code: entry for code, entry in data["squad"].items() if code in LINE}, ns)
+    if data.get("style") in PLAY_STYLES and ns == "tac":
         st.session_state.tac_style = data["style"]
-    st.session_state.tac_msg = f"📂 '{name}' 스쿼드를 불러왔습니다 ({saved['saved_at'][:16].replace('T', ' ')} 저장)."
+    _msg(ns, f"📂 '{name}' 스쿼드를 불러왔습니다 ({saved['saved_at'][:16].replace('T', ' ')} 저장).")
 
 
-def _delete(ctx: Ctx, name: str) -> None:
+def _delete(ctx: Ctx, name: str, ns: str = "tac") -> None:
     ctx.db.delete_squad(name)
-    st.session_state.tac_msg = f"🗑️ '{name}' 스쿼드를 지웠습니다."
+    _msg(ns, f"🗑️ '{name}' 스쿼드를 지웠습니다.")
 
 
-def _save_load(ctx: Ctx) -> None:
+def _save_load(ctx: Ctx, ns: str = "tac") -> None:
     saved = ctx.db.squads()
-    st.text_input("이름", key="tac_save_name", placeholder="예) 토트넘 팀컬러 4-2-3-1", max_chars=40)
-    st.button("💾 지금 스쿼드 저장", key="tac_save", type="primary", width="stretch", on_click=_save, args=(ctx,),
+    st.text_input("이름", key=f"{ns}_save_name", placeholder="예) 토트넘 팀컬러 4-2-3-1", max_chars=40)
+    st.button("💾 지금 스쿼드 저장", key=f"{ns}_save", type="primary", width="stretch", on_click=_save, args=(ctx, ns),
               help="같은 이름이면 덮어씁니다")
     st.markdown(f"**저장한 스쿼드** · {len(saved)}개")
     if not saved:
@@ -256,14 +261,15 @@ def _save_load(ctx: Ctx) -> None:
         n_col, l_col, d_col = st.columns([3, 1.2, 0.7], vertical_alignment="center")
         n_col.markdown(f"**{escape(item['name'])}**  \n<small>{escape(item['data'].get('formation') or CUSTOM)} · {filled}명 · "
                        f"{item['saved_at'][:16].replace('T', ' ')}</small>", unsafe_allow_html=True)
-        l_col.button("불러오기", key=f"tac_load_{i}", on_click=_load, args=(ctx, item["name"]), width="stretch")
-        d_col.button("🗑", key=f"tac_del_{i}", on_click=_delete, args=(ctx, item["name"]), width="stretch",
+        l_col.button("불러오기", key=f"{ns}_load_{i}", on_click=_load, args=(ctx, item["name"], ns), width="stretch")
+        d_col.button("🗑", key=f"{ns}_del_{i}", on_click=_delete, args=(ctx, item["name"], ns), width="stretch",
                      help="이 스쿼드 지우기")
 
 
 # ── 스쿼드 계산 — 자리 OVR · 급여 · 팀컬러 ──────────────────────────
 
-def squad_view(ctx: Ctx, codes: list[str], players: dict[str, dict | None], grades: dict[str, int | None]) -> dict:
+def squad_view(ctx: Ctx, codes: list[str], players: dict[str, dict | None], grades: dict[str, int | None],
+               ns: str = "tac") -> dict:
     """자리마다 {player, info, grade, ovr, exact, pay, pay_change, foot} + 평균 OVR · 총 급여 · 팀컬러 · 아직 받는 중인 것."""
     ovrs = slot_ovrs(ctx, codes, players, grades)   # 카드 상세가 없는 카드는 여기서 받기 시작한다
     spids = [int(p["player_id"]) for p in players.values() if p]
@@ -278,7 +284,7 @@ def squad_view(ctx: Ctx, codes: list[str], players: dict[str, dict | None], grad
         info, row = infos.get(spid), known.get(spid) or {}
         pay = row.get("pay") if row.get("pay") is not None else (info or {}).get("pay")   # 선수 검색 값이 더 자주 새로 온다
         ovr, exact = ovrs.get(code, (None, False))
-        entry = _squad().get(code) or {}
+        entry = _squad(ns).get(code) or {}
         # 선수 이미지 바꾸기는 LIVE 시즌 카드를 뺀 나머지 시즌만 (예전에 골라 둔 값이 있어도 LIVE 면 기본 이미지)
         swap = entry.get("img") and not is_live_season(p.get("season"))
         shown = {**p, "image": ACTION_IMAGE.format(spid=entry["img"])} if swap else p
@@ -485,14 +491,15 @@ def teamcolor_html(view: dict) -> str:
 
 
 @st.fragment(run_every=2)
-def _watch(ctx: Ctx, spids: list[int], tc_ids: list[int], price_spids: list[int], exact_jobs: list[tuple]) -> None:
+def _watch(ctx: Ctx, spids: list[int], tc_ids: list[int], price_spids: list[int], exact_jobs: list[tuple],
+           ns: str = "tac") -> None:
     """카드 상세 · 팀컬러 단계 · 시세 · 팀컬러 OVR 을 받는 동안 2초마다 확인 — 다 받았거나 4건 넘게 새로 오면 한 번 다시 그린다."""
     left = (ctx.cards.pending(spids) + ctx.teamcolors.pending(tc_ids)
             + sum(1 for s in price_spids if ctx.market.loading_current(s))
             + sum(1 for spid, combo in exact_jobs if ctx.cards.exact_waiting(spid, combo)))
-    if dialog_open():   # AI 추천 스쿼드 창을 쓰는 동안에는 화면을 다시 그리지 않는다
+    if dialog_open():   # AI 추천 스쿼드 · 선수 배치 창을 쓰는 동안에는 화면을 다시 그리지 않는다
         return
-    if left == 0 or st.session_state.get("tac_wait_shown", left) - left >= 4:
+    if left == 0 or st.session_state.get(f"{ns}_wait_shown", left) - left >= 4:
         st.rerun()
     st.caption(f"⏳ 데이터센터에서 카드 상세(포지션별 OVR · 특성 · 팀컬러) · 시세를 받는 중 — {left}건 남음. 받는 대로 바뀝니다.")
 
@@ -695,31 +702,31 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
 
 # ── 화면 ────────────────────────────────────────────────────────
 
-def _slot_editor(ctx: Ctx, code: str, slot: dict) -> None:
+def _slot_editor(ctx: Ctx, code: str, slot: dict, ns: str = "tac") -> None:
     """자리 선수 꾸미기 — 강화 등급 · 보유 신규 특성 · 선수 이미지(같은 선수의 다른 시즌 카드 액션샷, LIVE 시즌 카드는 못 바꾼다)."""
-    entry = _squad()[code]
+    entry = _squad(ns)[code]
     player = slot["player"]
     fields = {"grade": slot["grade"], "trait": entry.get("trait") or NO_TRAIT}
     for field, value in fields.items():   # 다른 곳(AI 추천 · 불러오기)에서 바뀐 값에 맞춘다
-        key = f"tac_{field}_{code}"
+        key = f"{ns}_{field}_{code}"
         if st.session_state.get(key) != value:
             st.session_state[key] = value
-    grade_buttons(f"{player['name']} 강화 등급", f"tac_grade_{code}", on_change=_set_field,
-                  args=(code, "grade", f"tac_grade_{code}"))
+    grade_buttons(f"{player['name']} 강화 등급", f"{ns}_grade_{code}", on_change=_set_field,
+                  args=(code, "grade", f"{ns}_grade_{code}", ns))
     t_col, r_col = st.columns([2, 1], vertical_alignment="bottom")
-    t_col.selectbox("보유 신규 특성", [NO_TRAIT] + list(NEW_TRAIT_ICONS), key=f"tac_trait_{code}", on_change=_set_field,
-                    args=(code, "trait", f"tac_trait_{code}"), help="카드에 얹은 신규 특성 (경기장 카드 오른쪽 위에 보입니다)")
-    r_col.button("↺ 이 선수 초기화", key=f"tac_reset_{code}", on_click=_reset_slot, args=(code,), width="stretch",
+    t_col.selectbox("보유 신규 특성", [NO_TRAIT] + list(NEW_TRAIT_ICONS), key=f"{ns}_trait_{code}", on_change=_set_field,
+                    args=(code, "trait", f"{ns}_trait_{code}", ns), help="카드에 얹은 신규 특성 (경기장 카드 오른쪽 위에 보입니다)")
+    r_col.button("↺ 이 선수 초기화", key=f"{ns}_reset_{code}", on_click=_reset_slot, args=(code, ns), width="stretch",
                  help="+1강 · 신규 특성 없음 · 기본 이미지로 (선수는 그대로)")
-    _image_picker(ctx, code, player, entry)
+    _image_picker(ctx, code, player, entry, ns)
 
 
-def _set_img(code: str, spid: int) -> None:
-    if _squad().get(code):
-        _squad()[code]["img"] = None if spid == OWN_IMAGE else spid
+def _set_img(code: str, spid: int, ns: str = "tac") -> None:
+    if _squad(ns).get(code):
+        _squad(ns)[code]["img"] = None if spid == OWN_IMAGE else spid
 
 
-def _image_picker(ctx: Ctx, code: str, player: dict, entry: dict) -> None:
+def _image_picker(ctx: Ctx, code: str, player: dict, entry: dict, ns: str = "tac") -> None:
     """선수 이미지 고르기 — 같은 선수의 다른 시즌 카드 액션샷을 이 카드 배경 위에 그려 보여 주고 눌러서 고른다 (골키퍼도 같다).
     LIVE 시즌 카드는 바꿀 수 없다. 없는 것으로 확인된 액션샷(넥슨 CDN 404)은 뺀다."""
     own = int(player["player_id"])
@@ -739,14 +746,14 @@ def _image_picker(ctx: Ctx, code: str, player: dict, entry: dict) -> None:
         items.append((choice, {**player, "image": ACTION_IMAGE.format(spid=spid)},
                       "기본" if choice == OWN_IMAGE else season_short(ctx.catalog.season_name(spid)),
                       ctx.catalog.season_name(spid) + (" (이 카드)" if choice == OWN_IMAGE else ""), None))
-    card_tiles(f"tac_img_{code}", items, current, lambda choice: _set_img(code, choice))
+    card_tiles(f"{ns}_img_{code}", items, current, lambda choice: _set_img(code, choice, ns))
 
 
-def _remove(code: str) -> None:
+def _remove(code: str, ns: str = "tac") -> None:
     """이 자리 선수를 뺀다 — 자리(포지션)는 그대로 두고 비운다."""
-    if _squad().get(code):
-        _squad()[code] = None
-        st.session_state.tac_msg = f"✕ {code} 자리의 선수를 뺐습니다 — 그 줄의 '➕ 추가'로 다시 넣을 수 있습니다."
+    if _squad(ns).get(code):
+        _squad(ns)[code] = None
+        _msg(ns, f"✕ {code} 자리의 선수를 뺐습니다 — 그 줄의 '➕ 추가'로 다시 넣을 수 있습니다.")
 
 
 def teamcolor_note(slot: dict) -> str:
@@ -755,9 +762,9 @@ def teamcolor_note(slot: dict) -> str:
     return " / ".join(f"🎨 {name} {level}단계: {', '.join(effects)}" for name, level, effects in applied)
 
 
-def _slot_list(ctx: Ctx, codes: list[str], view: dict) -> None:
+def _slot_list(ctx: Ctx, codes: list[str], view: dict, ns: str = "tac") -> None:
     """자리별 선수 줄 (공격수부터) — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 · 주발 · 국적/팀컬러 · 특성 · 그 자리 OVR
-    + 오른쪽에 '✏️ 편집'(빈 자리는 '➕ 추가')과 '✕ 빼기'를 위아래로 (좁은 칸에서도 버튼이 찌그러지지 않게)."""
+    + 오른쪽에 '✏️ 편집'(빈 자리는 '➕ 추가' — 선수 배치 창)과 '✕ 빼기'를 위아래로 (좁은 칸에서도 버튼이 찌그러지지 않게)."""
     for code in codes:
         slot = view["slots"].get(code)
         row_col, pop_col = st.columns([5, 1.25], vertical_alignment="center")
@@ -766,33 +773,324 @@ def _slot_list(ctx: Ctx, codes: list[str], view: dict) -> None:
             if slot.get("pay_change"):
                 notes.append(f"급여 {slot['pay_change']['before']} → {slot['pay']} (로스터 패치 {slot['pay_change']['at'][:10]})")
             note = " · ".join(notes)
-            row_col.markdown(ui_parts.card_row(slot["player"], slot["info"], grade=slot["grade"], ovr=slot["ovr"], position=code,
-                                               pay=slot["pay"], foot=slot["foot"], crests=crests_of(ctx, slot["info"]),
-                                               exact=slot["exact"], note=note, ovr_label=f"{code} OVR", compact=True,
-                                               tc_summary=slot.get("tc_summary")),
-                             unsafe_allow_html=True)
+            with row_col, st.container(key=f"prow_{ns}_{code}"):   # 줄을 누르면 그 선수 상세 (줄 위에 투명 버튼)
+                st.markdown(ui_parts.card_row(slot["player"], slot["info"], grade=slot["grade"], ovr=slot["ovr"], position=code,
+                                              pay=slot["pay"], foot=slot["foot"], crests=crests_of(ctx, slot["info"]),
+                                              exact=slot["exact"], note=note, ovr_label=f"{code} OVR", compact=True,
+                                              tc_summary=slot.get("tc_summary")),
+                            unsafe_allow_html=True)
+                st.button(f"{slot['player']['name']} 상세 보기", key=f"{ns}_open_{code}", width="stretch",
+                          on_click=open_player, args=(slot["player"]["player_id"],))
+            with pop_col.popover("✏️ 편집", width="stretch"):
+                _slot_editor(ctx, code, slot, ns)
+                st.divider()
+                st.button("🔁 다른 선수로 바꾸기", key=f"{ns}_swap_{code}", type="primary", width="stretch",
+                          on_click=_open_place, args=(ns, code), help="선수 배치 창 — 추천(랭킹) · 검색(상세 필터)")
         else:
             row_col.markdown(f'<div class="fc-prow compact" style="grid-template-columns:1fr"><div>{ui_parts.position_badge(code)} '
                              f'<span class="wait">비어 있음 — 오른쪽 \'➕ 추가\'로 선수를 넣으세요</span></div></div>',
                              unsafe_allow_html=True)
-        with pop_col.popover("✏️ 편집" if slot else "➕ 추가", width="stretch"):
-            pick_key = f"tac_pick_{code}"
-            current = slot["player"]["player_id"] if slot else None
-            if st.session_state.get(f"{pick_key}_seen") != current:   # 자리 선수가 바뀌었으면 선택기를 그 카드로 다시 채운다
-                for suffix in ("_name", "_who", "_card"):
-                    st.session_state.pop(f"{pick_key}{suffix}", None)
-                st.session_state[f"{pick_key}_seen"] = current
-            if slot:
-                _slot_editor(ctx, code, slot)
-                st.divider()
-            card_picker(ctx, key=pick_key, default_id=current, label="바꿀" if slot else "넣을")
-            g_col, b_col = st.columns([3.2, 1], vertical_alignment="bottom")   # 강화 버튼 줄 오른쪽에 넣기 버튼
-            with g_col:
-                grade_buttons("넣을 카드의 강화", f"{pick_key}_grade")
-            b_col.button("이 카드로 바꾸기" if slot else f"{code} 자리에 넣기", key=f"tac_apply_{code}", type="primary",
-                         on_click=_apply, args=(code, pick_key), width="stretch")
-        pop_col.button("✕ 빼기", key=f"tac_remove_{code}", width="stretch", on_click=_remove, args=(code,),
+            pop_col.button("➕ 추가", key=f"{ns}_add_{code}", type="primary", width="stretch", on_click=_open_place,
+                           args=(ns, code), help="선수 배치 창 — 추천(랭킹) · 검색(상세 필터)")
+        pop_col.button("✕ 빼기", key=f"{ns}_remove_{code}", width="stretch", on_click=_remove, args=(code, ns),
                        disabled=not slot, help=f"{code} 자리의 선수를 뺍니다 (자리는 비워 둡니다)")
+
+
+# ── 선수 배치 (공식 스쿼드 메이커의 '선수 배치' 창처럼 — 추천 · 검색) ─────────────
+
+PLACE_SHOWN = 20   # 한 탭에 보일 카드 수
+PLACE_ORDERS = ("팀컬러 우선", "OVR 우선")
+
+
+def _open_place(ns: str, code: str) -> None:
+    st.session_state.place_dialog = {"ns": ns, "code": code, "fresh": True}
+
+
+def _close_place() -> None:
+    st.session_state.place_dialog = None
+
+
+def _place(ns: str, code: str, spid: int, grade: int, name: str) -> None:
+    """고른 카드를 그 자리에 — 같은 선수가 다른 자리에 있으면 그 자리는 비운다 (한 스쿼드에 같은 선수는 한 명)."""
+    squad = _squad(ns)
+    moved = [c for c, e in squad.items() if e and c != code and int(e["pid"]) % 1_000_000 == spid % 1_000_000]
+    for other in moved:
+        squad[other] = None
+    squad[code] = {"pid": str(spid), "grade": grade}
+    _msg(ns, f"✅ {code} 자리에 {name} (+{grade}강)을 넣었습니다."
+             + (f" 같은 선수가 있던 {', '.join(moved)} 자리는 비웠습니다." if moved else ""))
+    _close_place()
+
+
+def _squad_teamcolors(view: dict) -> list[dict]:
+    """팀컬러 우선의 기준 — 스쿼드의 소속 · 특성 팀컬러 중 적용 중인 것(없으면 두 명 이상 겹치는 것)."""
+    out = []
+    for group in ("소속", "특성"):
+        entries = view["team"]["groups"].get(group, [])
+        best = next((e for e in entries if e["level"]), None) or next((e for e in entries if e["count"] >= 2), None)
+        if best:
+            out.append(best)
+    return out
+
+
+def _ranked(ctx: Ctx, code: str, view: dict, order: str) -> tuple[list[dict], str]:
+    """추천 — 랭커가 그 자리에 많이 쓰는 카드(데일리 차트 이용 순위). 팀컬러 우선이면 스쿼드 팀컬러에 드는 카드를 먼저
+    (그 팀컬러 · 그 포지션의 카드를 데이터센터에서 찾아 더한다)."""
+    group = USAGE_GROUP.get(code, code)
+    usage = ctx.daily.usage(group, wait=True) if ctx.daily.enabled else None
+    if usage:
+        cands = [{"spid": r["spid"], "rank": i + 1, "note": f"랭커 {r['share']:.1f}%", "ovr": r.get("ovr"), "pay": r.get("pay")}
+                 for i, r in enumerate(usage["rows"])]
+        source = f"데일리 차트 {usage['date']} — 랭커가 {group} 에 많이 쓴 순위"
+    else:
+        pool = sorted((p for p in ctx.players if p.get("position_group") == GROUP_OF.get(code) and p.get("ranker")),
+                      key=lambda p: -p["ranker"]["match_count"])
+        cands = [{"spid": p["spid"], "rank": i + 1, "note": f"랭커 {p['ranker']['match_count']}경기"}
+                 for i, p in enumerate(pool[:PLACE_SHOWN])]
+        source = "랭커 분석 카드 (데일리 차트를 받지 못해서 — 랭커 경기 수 순)"
+    if order != "팀컬러 우선":
+        return cands, source + " · 그 자리 OVR 높은 순으로"
+    targets = _squad_teamcolors(view)
+    if not targets or not ctx.finder.enabled:
+        return cands, source + " · 스쿼드에 겹치는 팀컬러가 아직 없어 순위대로"
+    matched: dict[int, str] = {}
+    for tc in targets:
+        try:
+            rows = ctx.finder.search(Filters(teamcolor=(tc["id"], tc["name"]), positions=(group,)))
+        except Exception:  # noqa: BLE001 — 팀컬러로 못 찾으면 순위대로
+            log.exception("선수 배치: 팀컬러 카드 검색 실패")
+            rows = []
+        for r in rows:
+            matched.setdefault(r["spid"], tc["name"])
+    listed = {c["spid"] for c in cands}
+    first = [{**c, "tc": matched[c["spid"]]} for c in cands if c["spid"] in matched]
+    extra = [{"spid": s, "rank": None, "note": "", "tc": name} for s, name in matched.items() if s not in listed]
+    rest = [c for c in cands if c["spid"] not in matched]
+    names = " · ".join(tc["name"] for tc in targets)
+    return first + extra[:PLACE_SHOWN] + rest, f"{source} · 스쿼드 팀컬러({names})에 드는 카드 먼저"
+
+
+def _searched(ctx: Ctx, query: str, detail: dict | None) -> tuple[list[dict], str]:
+    """검색 — 이름(쉼표로 여럿) · 상세 필터. 상세 필터를 적용했으면 데이터센터 선수 검색, 이름만이면 전체 카드에서 바로."""
+    names = name_parts(query)
+    if detail is not None and ctx.finder.enabled:
+        f = Filters(name=", ".join(names), **detail)
+        try:
+            with st.spinner("데이터센터에서 찾는 중…"):
+                rows = ctx.finder.search(f)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("선수 배치 검색 실패")
+            return [], friendly_error(exc)
+        return ([{"spid": r["spid"], "ovr": r.get("ovr"), "pay": r.get("pay")} for r in rows[:PLACE_SHOWN * 2]],
+                f"{len(rows)}장{' (OVR 높은 순 200장까지)' if len(rows) >= 200 else ''} · "
+                + " · ".join(f.chips(ctx.finder.season_names())[:-1]))
+    if names:
+        found = search_players(ctx, ", ".join(names), limit=PLACE_SHOWN * 2)
+        return [{"spid": p["spid"]} for p in found], f"이름 '{', '.join(names)}' — {len(found)}장 · 그 자리 OVR 높은 순"
+    return [], ""
+
+
+def _place_rows(ctx: Ctx, ns: str, code: str, cands: list[dict], view: dict, grade: int, by_ovr_first: bool, key: str) -> None:
+    """후보 줄 — 줄을 누르면 그 자리에 넣는다. 카드 상세(국적 · 팀컬러 · 그 자리 OVR)를 받는 동안에는 3초마다 이 목록만.
+    by_ovr_first = 그 자리 OVR 높은 순으로 (추천의 'OVR 우선' · 검색 결과). 순위 번호는 추천에만."""
+    spids = [c["spid"] for c in cands]
+    ctx.cards.want(spids)
+    if ctx.cards.pending(spids):
+        _place_rows_live(ctx, ns, code, cands, view, grade, by_ovr_first, key)
+    else:
+        _place_list(ctx, ns, code, cands, view, grade, by_ovr_first, key)
+
+
+@st.fragment(run_every=3)
+def _place_rows_live(ctx: Ctx, ns: str, code: str, cands: list[dict], view: dict, grade: int, by_ovr_first: bool,
+                     key: str) -> None:
+    left = _place_list(ctx, ns, code, cands, view, grade, by_ovr_first, key)
+    if left:
+        st.caption(f"⏳ 카드 상세(국적 · 팀컬러 · 그 자리 OVR)를 데이터센터에서 받는 중 — {left}장 남음")
+    else:
+        st.rerun()   # 다 받았다 — 창을 한 번 다시 그려 멈춘 목록으로 (창은 열린 채로)
+
+
+def _place_list(ctx: Ctx, ns: str, code: str, cands: list[dict], view: dict, grade: int, by_ovr_first: bool, key: str) -> int:
+    spids = [c["spid"] for c in cands]
+    infos = ctx.cards.get(spids)
+    known = ctx.db.card_stats(spids)
+    slot = view["slots"].get(code)
+    base_pay = view["pay"] - ((slot or {}).get("pay") or 0)
+    rows = []
+    for c in cands:
+        info, row = infos.get(c["spid"]) or {}, known.get(c["spid"]) or {}
+        ovr, exact = ovr_at(code, grade, info.get("position_ovr"), row.get("positions"),
+                            info.get("ovr") or row.get("ovr") or c.get("ovr"))
+        pay = row.get("pay") if row.get("pay") is not None else info.get("pay", c.get("pay"))
+        rows.append((c, info, row, ovr, exact, pay))
+    if by_ovr_first:
+        rows.sort(key=lambda r: -(r[3] or 0))
+    head_col, _ = st.columns([14, 1.3], gap="small")   # 머리줄도 줄과 같은 칸 나눔으로 (오른쪽 ⓘ 칸만큼 비운다)
+    head_col.markdown(ui_parts.place_head(code), unsafe_allow_html=True)
+    ranked = key == "rec"
+    for i, (c, info, row, ovr, exact, pay) in enumerate(rows):
+        p = get_player(ctx, str(c["spid"]))
+        crests = crests_of(ctx, info) if info else []
+        flag = crests[0] if crests and info.get("nation_flag") else None
+        r_col, i_col = st.columns([14, 1.3], vertical_alignment="center", gap="small")
+        with r_col, st.container(key=f"prow_place_{key}_{c['spid']}"):
+            rank = (i + 1 if by_ovr_first else c.get("rank")) if ranked else None
+            st.markdown(ui_parts.place_row(p, rank=rank, ovr=ovr, exact=exact, position=code,
+                                           grade=grade, pay=pay, total=base_pay + pay if pay is not None else None, cap=PAY_CAP,
+                                           nation=flag, crests=crests[1:] if flag else crests, note=c.get("note", ""),
+                                           teamcolor=c.get("tc"), waiting=not info),
+                        unsafe_allow_html=True)
+            if st.button(f"{p['name']} · {p['season_short']} 을(를) {code} 자리에", key=f"place_{key}_{c['spid']}",
+                         width="stretch"):   # 줄 전체를 덮어야 어디를 눌러도 들어간다 (내용 폭이면 왼쪽만 눌렸다)
+                _place(ns, code, c["spid"], grade, p["name"])
+                st.rerun()
+        with i_col.popover("ⓘ", width="stretch", help="선수 정보"):
+            st.markdown(ui_parts.card_row(p, info or None, grade=grade, ovr=ovr, position=code, pay=pay,
+                                          foot=info.get("foot_lr") or row.get("foot"), crests=crests, exact=exact,
+                                          ovr_label=f"{code} OVR", compact=True), unsafe_allow_html=True)
+            if st.button("선수 상세 페이지 →", key=f"place_open_{key}_{c['spid']}", width="stretch"):
+                _close_place()
+                open_player(p["player_id"])
+                st.rerun()
+    return ctx.cards.pending(spids)
+
+
+@st.dialog("선수 배치", width="large", on_dismiss=_close_place)
+def place_dialog(ctx: Ctx, ns: str, code: str, view: dict) -> None:
+    """선수 배치 — ⭐ 추천(랭커가 그 자리에 많이 쓴 순위, 팀컬러 우선 · OVR 우선) · 🔎 검색(이름 · 상세 필터).
+    줄마다 그 자리 OVR · 국가 · 팀컬러 · 급여 · 예상 총급여(이 카드를 넣으면), ⓘ 선수 정보. 줄을 누르면 그 자리에 넣는다."""
+    state = st.session_state.place_dialog
+    slot = view["slots"].get(code)
+    group = USAGE_GROUP.get(code, code)
+    if state.get("fresh"):   # 처음 열 때 — 넣을 강화는 지금 선수의 강화, 상세 필터의 포지션은 이 자리
+        state["fresh"] = False
+        st.session_state.place_grade = (slot or {}).get("grade") or 1
+        st.session_state.place_q = ""
+        reset_filters("pp")
+        preset_filters("pp", (group,))
+    now = (f"지금 <b>{escape(slot['player']['name'])}</b> · {escape(slot['player']['season_short'])} +{slot['grade']}강"
+           if slot else "비어 있는 자리")
+    st.markdown(f'<div class="fc-placehd">{ui_parts.position_badge(code)} <span>{now}</span>'
+                f'<span class="pay">총급여 <b>{view["pay"]}</b>/{PAY_CAP}</span></div>', unsafe_allow_html=True)
+    grade = grade_buttons("넣을 카드의 강화", "place_grade")
+    rec_tab, find_tab = st.tabs(["⭐ 추천 · 랭킹", "🔎 검색"])
+    with rec_tab:
+        st.session_state.setdefault("place_order", PLACE_ORDERS[0])
+        order = st.segmented_control("순서", PLACE_ORDERS, key="place_order", label_visibility="collapsed") or PLACE_ORDERS[0]
+        with st.spinner("랭커 이용 순위 · 팀컬러 카드를 불러오는 중…"):
+            cands, source = _ranked(ctx, code, view, order)
+        st.caption(source)
+        if cands:
+            _place_rows(ctx, ns, code, cands[:PLACE_SHOWN + 10], view, grade, order == "OVR 우선", "rec")
+        else:
+            st.caption("추천할 카드가 없습니다 — 🔎 검색 탭에서 찾아 보세요.")
+    with find_tab:
+        query = st.text_input("선수 이름", key="place_q", placeholder="이름 (쉼표로 여럿 — 예: 손흥민, 케인, 음바페)",
+                              label_visibility="collapsed")
+        detail = detail_panel(ctx, "pp", title="🔎 상세 필터 — 시즌 · 팀컬러 · 포지션 · 오버롤 · 급여 · 특성 · 강화 · 주발 · 체형")
+        cands, source = _searched(ctx, query, detail)
+        if source:
+            st.caption(source)
+        if cands:
+            _place_rows(ctx, ns, code, cands, view, grade, True, "find")
+        elif query.strip() or detail is not None:
+            st.caption("조건에 맞는 카드가 없습니다.")
+        else:
+            st.caption("이름을 적거나, 상세 필터를 고른 뒤 '🔎 검색'을 누르세요.")
+
+
+# ── 스쿼드 화면 (스쿼드 메이커 · 🎮 내 기록이 같이 쓴다) ─────────────
+
+def _open_slot(ns: str) -> None:
+    """경기장에서 누른 카드의 선수 상세로."""
+    entry = _squad(ns).get(clicked(f"{ns}_pitch") or "")
+    if entry:
+        open_player(str(entry["pid"]))
+
+
+def squad_board(ctx: Ctx, ns: str = "tac", marks: bool = True) -> dict:
+    """위 요약(팀컬러 · 구단가치 · 주요 선수) · 평균 OVR · 총 급여 · 경기장(끌어서 자리 바꾸기 · 누르면 선수 상세) · 자리별 선수
+    (누르면 선수 상세 · 편집 · 선수 배치 · 빼기) · 팀컬러. marks=False 면 추정값 표시(*)를 빼고 보인다 (🎮 내 기록).
+    돌려주는 값: squad_view + players · grades · codes · formation (AI 전술 추천이 쓴다)."""
+    codes = _codes(ns)
+    entries = _squad(ns)
+    players = {code: get_player(ctx, entries[code]["pid"]) if entries.get(code) else None for code in codes}
+    grades = {code: (entries[code] or {}).get("grade") for code in codes}
+    view = squad_view(ctx, codes, players, grades, ns)
+    if not marks:   # 카드 상세 · 팀컬러 OVR 을 받기 전의 값도 * 없이 (받는 대로 바뀐다)
+        for s in view["slots"].values():
+            s["exact"] = True
+        view["all_exact"] = True
+    formation = st.session_state[f"{ns}_formation"]
+    st.markdown(top_html(view), unsafe_allow_html=True)
+    st.markdown(summary_html(view), unsafe_allow_html=True)
+    if view["waiting"]:
+        st.session_state[f"{ns}_wait_shown"] = view["waiting"]
+        _watch(ctx, view["spids"], view["tc_ids"], view["price_spids"], view["exact_jobs"], ns)
+    placing = st.session_state.get("place_dialog")
+    if placing and placing.get("ns") == ns and placing.get("code") in codes:   # 닫을 때까지 열어 둔다
+        place_dialog(ctx, ns, placing["code"], view)
+
+    pitch_col, list_col = st.columns([1.1, 1], gap="large")
+    with pitch_col:
+        st.caption("카드를 끌어 다른 자리에 놓으면 포지션 · 자리 OVR 이 바뀝니다 · 카드 밑은 시세 · 구단가치 중 비율")
+        ovrs = {code: (s["ovr"], s["exact"]) for code, s in view["slots"].items()}
+        extras = {code: {"player": s["player"], "pay": s["pay"], "trait": s["trait"],
+                         "flag": (s["info"] or {}).get("nation_flag", ""), "nation": (s["info"] or {}).get("nation", ""),
+                         "price": (f"{ui_parts.bp_short(s['price'])} · <b>{share_text(s['share'])}</b>"
+                                   if s["price"] else "시세 받는 중" if ctx.market.enabled else "")}
+                  for code, s in view["slots"].items()}
+        pitch(f"{ns}_pitch", pitch_slots(codes, players, formation if formation in FORMATIONS else None, grades, ovrs, extras),
+              on_move=partial(_on_drop, ns), on_open=partial(_open_slot, ns))
+        st.markdown(chips_html(view, formation), unsafe_allow_html=True)
+        st.caption("카드의 숫자는 그 자리에서의 OVR(강화 포함)입니다. 카드를 누르면 선수 상세로 갑니다."
+                   + (" * 는 카드 상세를 받기 전의 추정값입니다." if marks else ""))
+    with list_col:
+        st.markdown(f"**자리별 선수** — {escape(formation)} · 공격수부터 · 줄을 누르면 선수 상세 · '➕ 추가' · '✏️ 편집'으로 "
+                    "넣기 · 교체 · 강화 · 이미지, '✕ 빼기'로 그 자리 비우기")
+        _slot_list(ctx, list_order(codes, formation), view, ns)
+    st.markdown(teamcolor_html(view), unsafe_allow_html=True)
+    return {**view, "players": players, "grades": grades, "codes": codes, "formation": formation}
+
+
+def _formation_select(col, ns: str) -> None:
+    custom = st.session_state[f"{ns}_formation"] not in FORMATIONS
+    options = list(FORMATIONS) + ([CUSTOM] if custom else [])
+    col.selectbox("포메이션 (공식 33개)", options, key=f"{ns}_formation_pick", on_change=_on_formation, args=(ns,),
+                  format_func=lambda f: f"{GROUP_OF_FORMATION[f]} · {f}" if f in GROUP_OF_FORMATION else f"✋ {f}")
+
+
+def _send_to_maker(ns: str) -> None:
+    """이 스쿼드를 그대로 스쿼드 메이커로 — AI 전술 추천은 거기서."""
+    formation = st.session_state[f"{ns}_formation"]
+    _set(formation if formation in FORMATIONS else None, copy.deepcopy(_squad(ns)), "tac")
+    _msg("tac", "🎮 내 기록의 스쿼드를 가져왔습니다 — 아래 '🧠 AI 전술 추천받기'로 전술을 받아 보세요.")
+    go("tactics")
+
+
+def my_squad(ctx: Ctx, account: dict) -> None:
+    """🎮 내 기록의 내 스쿼드 — 스쿼드 메이커와 같은 화면 · 같은 편집(강화 · 특성 · 이미지 · 선수 배치 · 끌어서 자리 바꾸기)과
+    저장. 처음 열 때(연결한 계정이 바뀌면 다시) 최근 공식경기 선발을 불러온다. 상태는 스쿼드 메이커와 따로('me')."""
+    ns = "me"
+    _ensure_state(ctx, ns)
+    if st.session_state.get("me_loaded") != account["ouid"]:
+        st.session_state.me_loaded = account["ouid"]
+        with st.spinner("최근 공식경기 선발을 불러오는 중…"):
+            _fill_mine(ctx, ns)
+    f_col, r_col, x_col, s_col, t_col = st.columns([1.7, 1.2, 1, 1.4, 1.6], vertical_alignment="bottom")
+    _formation_select(f_col, ns)
+    r_col.button("🔄 다시 불러오기", key="me_reload", on_click=_fill_mine, args=(ctx, ns), width="stretch",
+                 help=f"{account['nickname']}의 최근 공식경기 선발로 다시 (고친 것은 사라집니다 — 먼저 저장하세요)")
+    x_col.button("↺ 초기화", key="me_reset_all", on_click=_reset_all, args=(ns,), width="stretch",
+                 help="모든 선수의 강화 · 보유 신규 특성 · 선수 이미지를 처음으로 (선수 · 포메이션은 그대로)")
+    with s_col.popover("💾 저장 · 불러오기", width="stretch"):
+        _save_load(ctx, ns)
+    t_col.button("🧠 이 스쿼드로 AI 전술", key="me_to_tactics", type="primary", width="stretch", on_click=_send_to_maker,
+                 args=(ns,), help="이 스쿼드를 그대로 스쿼드 메이커로 가져가 AI 전술 추천을 받습니다")
+    if st.session_state.get("me_msg"):
+        st.info(st.session_state.me_msg)
+    squad_board(ctx, ns, marks=False)
 
 
 def render(ctx: Ctx) -> None:
@@ -800,13 +1098,10 @@ def render(ctx: Ctx) -> None:
                 '바뀝니다 — 총 급여 · 팀컬러를 함께 보고, 짠 스쿼드는 저장해 두었다가 불러옵니다</small></div>',
                 unsafe_allow_html=True)
     _ensure_state(ctx)
-    codes = _codes()
     custom = st.session_state.tac_formation not in FORMATIONS
 
     f_col, s_col = st.columns([1, 2], vertical_alignment="bottom")
-    options = list(FORMATIONS) + ([CUSTOM] if custom else [])
-    f_col.selectbox("포메이션 (공식 33개)", options, key="tac_formation_pick", on_change=_on_formation,
-                    format_func=lambda f: f"{GROUP_OF_FORMATION[f]} · {f}" if f in GROUP_OF_FORMATION else f"✋ {f}")
+    _formation_select(f_col, "tac")
     st.session_state.setdefault("tac_style", PLAY_STYLES[0])
     with s_col:
         style = st.pills("원하는 스타일", PLAY_STYLES, key="tac_style") or PLAY_STYLES[0]
@@ -829,38 +1124,10 @@ def render(ctx: Ctx) -> None:
     if st.session_state.get("tac_msg"):
         st.info(st.session_state.tac_msg)
 
-    entries = _squad()
-    players = {code: get_player(ctx, entries[code]["pid"]) if entries.get(code) else None for code in codes}
-    grades = {code: (entries[code] or {}).get("grade") for code in codes}
-    view = squad_view(ctx, codes, players, grades)
-    formation = st.session_state.tac_formation
-    st.markdown(top_html(view), unsafe_allow_html=True)
-    st.markdown(summary_html(view), unsafe_allow_html=True)
-    if view["waiting"]:
-        st.session_state.tac_wait_shown = view["waiting"]
-        _watch(ctx, view["spids"], view["tc_ids"], view["price_spids"], view["exact_jobs"])
-
-    pitch_col, list_col = st.columns([1.1, 1], gap="large")
-    with pitch_col:
-        st.caption("카드를 끌어 다른 자리에 놓으면 포지션 · 자리 OVR 이 바뀝니다 · 카드 밑은 시세 · 구단가치 중 비율")
-        ovrs = {code: (s["ovr"], s["exact"]) for code, s in view["slots"].items()}
-        extras = {code: {"player": s["player"], "pay": s["pay"], "trait": s["trait"],
-                         "flag": (s["info"] or {}).get("nation_flag", ""),
-                         "price": (f"{ui_parts.bp_short(s['price'])} · <b>{share_text(s['share'])}</b>"
-                                   if s["price"] else "시세 받는 중" if ctx.market.enabled else "")}
-                  for code, s in view["slots"].items()}
-        pitch("tac_pitch", pitch_slots(codes, players, formation if formation in FORMATIONS else None, grades, ovrs, extras),
-              on_move=_on_drop)
-        st.markdown(chips_html(view, formation), unsafe_allow_html=True)
-        st.caption("카드의 숫자는 그 자리에서의 OVR(강화 포함)입니다. * 는 카드 상세를 받기 전의 추정값입니다.")
-    with list_col:
-        st.markdown(f"**자리별 선수** — {escape(formation)} · 공격수부터 · '➕ 추가' · '✏️ 편집'으로 넣기 · 교체 · 강화 · 이미지, "
-                    "'✕ 빼기'로 그 자리 비우기")
-        _slot_list(ctx, list_order(codes, formation), view)
-    st.markdown(teamcolor_html(view), unsafe_allow_html=True)
+    board = squad_board(ctx, "tac")
+    players, grades, codes, formation = board["players"], board["grades"], board["codes"], board["formation"]
     with st.expander("📋 FC 온라인 팀 전술 항목"):
-        for name, options_text, desc in TEAM_TACTICS:
-            st.markdown(f"**{name}** · {options_text}  \n{desc}")
+        st.markdown(ui_parts.tactic_cards(TEAM_TACTICS), unsafe_allow_html=True)
         st.caption("항목 이름 · 선택지는 게임 업데이트로 바뀔 수 있습니다.")
 
     filled = [(code, p) for code, p in players.items() if p]
@@ -879,7 +1146,7 @@ def render(ctx: Ctx) -> None:
                     full = enrich_many(ctx, [p for _, p in filled])
                     filled = [(code, p) for (code, _), p in zip(filled, full)]
                 status.write("전술 항목 설명 + 선수들의 자리 OVR · 기록 · 팀컬러를 근거로 추천을 만드는 중... (LLM)")
-                saved = recommend_tactics(label, style, filled, ctx.model, squad_facts(view))
+                saved = recommend_tactics(label, style, filled, ctx.model, squad_facts(board))
                 st.session_state.results[key] = saved
                 status.update(label="전술 추천 완료", state="complete")
         except Exception as exc:  # noqa: BLE001

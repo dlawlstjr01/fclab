@@ -9,7 +9,7 @@ import streamlit as st
 
 from data_prep.nexon_api import split_spid
 from data_prep.players import season_short
-from views.common import Ctx, by_ovr, card_ovrs, get_player
+from views.common import Ctx, by_ovr, card_ovrs, get_player, name_parts
 
 # ── 강화 등급 고르기 ─────────────────────────────────────────────
 
@@ -118,7 +118,12 @@ def season_select(ctx: Ctx, key: str, label: str = "시즌", all_label: str = "�
 # ── 이름 → 시즌 카드 선택 ─────────────────────────────────────────
 
 def _persons(ctx: Ctx, query: str) -> list[int]:
-    """이름이 맞는 선수(pid) — 이름이 딱 맞는 사람 먼저, 카드가 많은(유명한) 사람 먼저."""
+    """이름이 맞는 선수(pid) — 이름이 딱 맞는 사람 먼저, 카드가 많은(유명한) 사람 먼저. 쉼표로 여럿이면 이름마다 앞쪽부터 섞는다."""
+    parts = name_parts(query)
+    if len(parts) > 1:
+        lists = [_persons(ctx, part) for part in parts]
+        merged = [pid for row in zip(*[lst + [None] * (30 - len(lst)) for lst in lists]) for pid in row if pid is not None]
+        return list(dict.fromkeys(merged))[:30]
     seen, pids = set(), []
     for hit in ctx.catalog.search(query, limit=3000):
         pid = split_spid(hit["spid"])[1]
@@ -153,7 +158,7 @@ def card_picker(ctx: Ctx, key: str, default_id: str | None = None, label: str = 
         st.session_state[who_key] = pid
         st.session_state.pop(card_key, None)
 
-    query = st.text_input(f"{label} 선수 이름".strip(), key=name_key, placeholder="이름을 입력하세요 (예: 손흥민)", on_change=reset)
+    query = st.text_input(f"{label} 선수 이름".strip(), key=name_key, placeholder="이름 (쉼표로 여럿 — 예: 손흥민, 케인)", on_change=reset)
     pid = st.session_state.get(who_key)
 
     if pid is None:

@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from data_prep.market import MAX_GRADE, bp, change, signal
+from views.widgets import grade_buttons
 from views.common import Ctx
 
 NOTE = ("시세 출처: FC 온라인 홈페이지 데이터센터. 사기/팔기 판단은 최근 가격 흐름만 본 참고용이며, "
@@ -147,8 +148,8 @@ def _price_view(ctx: Ctx, player: dict, mine: list[dict] | None) -> None:
 
     grades = list(rows)
     default = next((g for g in grades if g in mine_by), grades[0])
-    grade = st.selectbox("자세히 볼 강화 단계", grades, index=grades.index(default), format_func=lambda g: f"+{g}",
-                         key=f"price_grade_{spid}")
+    st.session_state.setdefault(f"price_grade_{spid}", default)
+    grade = grade_buttons("자세히 볼 강화 단계", f"price_grade_{spid}", options=grades)
     row = rows[grade]
     sig = row["signal"]
     if not row["history_fresh"] and loading:   # 고른 단계의 일별 시세를 먼저

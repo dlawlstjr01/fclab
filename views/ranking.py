@@ -16,7 +16,7 @@ import ui_parts
 from data_prep.datacenter import DAILY_STATS, MODES
 from data_prep.enhance import GRADE_OVR
 from data_prep.players import POSITION_GROUPS, SORT_LABELS, SORT_STATS, STATS
-from services.finder import Filters, members
+from services.finder import Filters, club_label, members
 from services.insights import leaderboard
 from services.teamcolor import effect_bonus, enhance_details
 from views.common import Ctx, card_basics, daily_wait, friendly_error, get_player, open_player, tile_grid, with_saves
@@ -72,9 +72,10 @@ def _conditions(ctx: Ctx, prefix: str, ranker: bool) -> dict | None:
         nation = c1.selectbox("국적", [None] + sorted(options["nations"]), key=f"{prefix}_nation",
                               format_func=lambda v: "전체" if v is None else v)
         club = c2.selectbox("클럽 (클럽 경력까지)", [None] + sorted(options["teams"]), key=f"{prefix}_club",
-                            format_func=lambda v: "전체" if v is None else v)
+                            format_func=lambda v: "전체" if v is None else club_label(v),
+                            help="실제 이름 · 줄임말로도 찾을 수 있습니다 (예: 인테르 → 롬바르디아 FC, AC 밀란 → 밀라노 FC)")
         tc = c3.selectbox("팀컬러 (소속 · 특성 — 이 팀컬러에 드는 카드만)", [None] + normal, key=f"{prefix}_tc",
-                          format_func=lambda v: "전체" if v is None else f"{v['name']} · {v['kind']}")
+                          format_func=lambda v: "전체" if v is None else f"{club_label(v['name'])} · {v['kind']}")
         tc_levels = _level_options(ctx, tc)
         tc_level = c4.selectbox("단계", tc_levels, index=len(tc_levels) - 1 if tc_levels else 0,
                                 key=f"{prefix}_tclv_{tc['id'] if tc else 'none'}", disabled=not tc,
@@ -88,7 +89,8 @@ def _conditions(ctx: Ctx, prefix: str, ranker: bool) -> dict | None:
                                  key=f"{prefix}_enhlv_{enh['id'] if enh else 'none'}", disabled=not enh,
                                  format_func=lambda lv: f"Lv.{lv['level']}") if enh_levels else \
             d2.selectbox("단계", ["-"], key=f"{prefix}_enhlv_none", disabled=True)
-        traits = d3.multiselect("보유 특성 (최대 3개)", options["traits"], key=f"{prefix}_traits", max_selections=3)
+        traits = d3.multiselect("보유 특성 (최대 3개)", options["traits"], key=f"{prefix}_traits", max_selections=3,
+                                placeholder="특성 이름 (쳐서 찾기)")
         st.session_state.setdefault(f"{prefix}_foot", "전체")
         foot = d4.segmented_control("주발", ["전체", "오른발", "왼발"], key=f"{prefix}_foot")
         grade = 1
@@ -225,9 +227,9 @@ def _daily_board(ctx: Ctx) -> None:
         line_col, btn = st.columns([6, 1], vertical_alignment="center")
         line_col.markdown(
             f'<div class="fc-line daily"><div class="rk">{rank}</div>'
-            f'<div class="cv">{ui_parts.card_visual(p, r["ovr"], r["position"], pay=r.get("pay"))}</div>'
+            f'<div class="cv">{ui_parts.card_visual(p, r["ovr"], r["position"])}</div>'
             f'<div><div class="nm">{escape(p["name"])} <span class="sb">{escape(p["season_short"])} · {escape(r["position"])}'
-            f'{grade_text}</span></div>'
+            f'{grade_text}</span>{ui_parts.pay_badge(r.get("pay"))}</div>'
             f'<div class="st">{stats}</div></div></div>', unsafe_allow_html=True)
         # 같은 카드가 강화 등급만 달리 두 번 나올 수 있다 — 키에 순위를 넣는다
         btn.button("상세보기", key=f"drank_open_{rank}_{r['spid']}", on_click=open_player, args=(str(r["spid"]),),
@@ -326,12 +328,14 @@ def _ranker_board(ctx: Ctx) -> None:
         if r.get("applied") is not None:
             ovr_text = f"OVR {r['applied']}" + (f" ({r['applied_note']})" if r.get("applied_note") else "")
             stats = (f"<b>{escape(ovr_text)}</b>" if key == "applied" else escape(ovr_text)) + " · " + stats
+        card = basics.get(p["spid"]) or {}
         line, btn = st.columns([6, 1], vertical_alignment="center")
         line.markdown(
-            f'<div class="fc-line"><div class="rk">{rank}</div>'
-            f'<img src="{escape(ui_parts.image(p.get("face")) or ui_parts.image(p.get("image")))}" alt="">'
+            f'<div class="fc-line daily"><div class="rk">{rank}</div>'
+            f'<div class="cv">{ui_parts.card_visual(p, card.get("ovr"), card.get("position"))}</div>'
             f'<div><div class="nm">{escape(p["name"])} <span class="sb">{escape(p["season_short"])} · '
-            f'{escape(", ".join(p["positions"]))} · {p["ranker"]["match_count"]}경기</span></div>'
+            f'{escape(", ".join(p["positions"]))} · {p["ranker"]["match_count"]}경기</span>'
+            f'{ui_parts.pay_badge(card.get("pay"))}</div>'
             f'<div class="st">{stats}</div></div></div>', unsafe_allow_html=True)
         btn.button("상세보기", key=f"rank_open_{p['player_id']}", on_click=open_player, args=(p["player_id"],),
                    width="stretch")

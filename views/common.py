@@ -21,6 +21,7 @@ import llm
 import ui_parts
 from data_prep.collector import Collector
 from data_prep.db import FcDb
+from data_prep.enhance import GRADE_OVR
 from data_prep.datacenter import DatacenterClient
 from data_prep.nexon_api import NexonClient, NexonError, NexonQuotaError, split_spid
 from data_prep.player_builder import CardCatalog
@@ -377,7 +378,7 @@ def _leave() -> None:
 
 def _arrive(entry: dict) -> None:
     st.session_state.page = entry["page"]
-    st.session_state.ai_dialog = st.session_state.cmp_dialog = None
+    st.session_state.ai_dialog = st.session_state.cmp_dialog = st.session_state.place_dialog = None
     if entry["player_id"]:
         st.session_state.player_id = entry["player_id"]
     for key in KEEP_INPUTS.get(entry["page"], ()):
@@ -545,12 +546,26 @@ def _learn_ovrs(ctx: Ctx, query: str) -> None:
     ctx.db.dc_put(key, len(rows))
 
 
+def name_parts(query: str) -> list[str]:
+    """쉼표로 적은 여러 선수 이름 — '손흥민, 케인 ,음바페' → ['손흥민', '케인', '음바페'] (빈 칸 · 같은 이름은 뺀다)."""
+    return list(dict.fromkeys(part.strip() for part in (query or "").split(",") if part.strip()))
+
+
 def search_players(ctx: Ctx, query: str, seasons: tuple[int, ...] | None = None, limit: int = 24) -> list[dict]:
     """이름 검색 + 시즌(클래스, 갈래를 합친 시즌이면 여럿) 거르기 — 분석해 둔 카드와 전체 88,359장에서 찾아 OVR 높은 순으로.
 
     OVR 을 모르는 카드는 최신 시즌 순으로 뒤에 둔다. 이름으로 찾았는데 모르는 카드가 있으면 데이터센터 선수 검색 한 번으로
     그 이름의 카드 OVR 을 받아 DB 에 둔다 — 다음부터는 바로 정렬된다. 이름 없이 시즌만 고르면 그 시즌 카드를 둘러본다.
+    쉼표로 여러 이름을 적으면 이름마다 찾아 합친다 (모두 OVR 높은 순).
     """
+    parts = name_parts(query)
+    if len(parts) > 1:
+        found: dict[str, dict] = {}
+        for part in parts:
+            for p in search_players(ctx, part, seasons, limit):
+                found.setdefault(p["player_id"], p)
+        ovrs = card_ovrs(ctx, [p["spid"] for p in found.values()])
+        return sorted(found.values(), key=lambda p: (p["spid"] not in ovrs, -ovrs.get(p["spid"], 0), -split_spid(p["spid"])[0]))[:limit]
     q = _norm(query)
     if not q and not seasons:
         return []
@@ -637,10 +652,11 @@ def with_saves(ctx: Ctx, players: list[dict]) -> list[dict]:
 
 
 def tile_grid(ctx: Ctx, players: list[dict], key: str, cols: int = 6, ranked: bool = False,
-              kpi=None, reasons: dict[str, str] | None = None, badges: dict[str, str] | None = None) -> None:
+              kpi=None, reasons: dict[str, str] | None = None, badges: dict[str, str] | None = None, grade: int = 1) -> None:
     """카드 타일 묶음 — 카드 전체가 버튼이다 (ui_parts.css 의 .st-key-tile_* : 타일 위에 투명 버튼을 겹친다).
 
     badges(랭킹 순위) · reasons(AI 추천 이유)는 카드 안에 넣는다 — 카드 밖에 따로 두면 겹치거나 줄이 어긋난다.
+    grade 를 주면 그 강화의 OVR 과 강화 표시로 (상세 검색의 강화 등급).
     """
     players = with_saves(ctx, players)
     spids = [p["spid"] for p in players]
@@ -654,10 +670,12 @@ def tile_grid(ctx: Ctx, players: list[dict], key: str, cols: int = 6, ranked: bo
             for offset, (col, p) in enumerate(zip(st.columns(cols), players[start : start + cols])):
                 card = known.get(p["spid"], {})
                 with col, st.container(key=f"tile_{key}_{p['player_id']}"):
+                    ovr = card.get("ovr") + GRADE_OVR[grade] if card.get("ovr") else None
                     st.markdown(ui_parts.tile(p, rank=start + offset + 1 if ranked else None, kpi=kpi(p) if kpi else None,
                                               badge=(badges or {}).get(p["player_id"], ""),
-                                              note=(reasons or {}).get(p["player_id"], ""), ovr=card.get("ovr"),
-                                              position=card.get("position"), pay=card.get("pay"), foot=card.get("foot")),
+                                              note=(reasons or {}).get(p["player_id"], ""), ovr=ovr,
+                                              position=card.get("position"), pay=card.get("pay"), foot=card.get("foot"),
+                                              grade=grade if grade > 1 else None),
                                 unsafe_allow_html=True)
                     st.button(f"{p['name']} · {p['season_short']} 보기", key=f"{key}_{p['player_id']}",
                               on_click=open_player, args=(p["player_id"],), width="stretch")
@@ -690,8 +708,8 @@ def daily_wait(ctx: Ctx) -> None:
 
 
 def dialog_open() -> bool:
-    """모달(AI 추천 스쿼드 · 바로 비교)이 열려 있나 — 열려 있는 동안에는 받는 중 감시가 화면을 다시 그리지 않는다."""
-    return bool(st.session_state.get("ai_dialog") or st.session_state.get("cmp_dialog"))
+    """모달(AI 추천 스쿼드 · 바로 비교 · 선수 배치)이 열려 있나 — 열려 있는 동안에는 받는 중 감시가 화면을 다시 그리지 않는다."""
+    return bool(st.session_state.get("ai_dialog") or st.session_state.get("cmp_dialog") or st.session_state.get("place_dialog"))
 
 
 def tile_watch(ctx: Ctx) -> None:
@@ -724,9 +742,9 @@ def crests_of(ctx: Ctx, info: dict | None) -> list[tuple[str, str]]:
     return out
 
 
-def card_row_list(ctx: Ctx, players: list[dict], key: str, notes: dict[str, str] | None = None) -> int:
+def card_row_list(ctx: Ctx, players: list[dict], key: str, notes: dict[str, str] | None = None, grade: int = 1) -> int:
     """선수 줄 목록 (공식 스쿼드 메이커의 선수 목록처럼) — 줄 전체가 버튼(상세 페이지). 카드 상세가 없는 카드는 받기 시작하고
-    아직 받는 중인 장수를 돌려준다 (부르는 쪽이 조각을 다시 그린다)."""
+    아직 받는 중인 장수를 돌려준다 (부르는 쪽이 조각을 다시 그린다). grade 를 주면 그 강화의 OVR · 능력치로."""
     spids = [p["spid"] for p in players]
     ctx.cards.want(spids)
     infos = ctx.cards.get(spids)
@@ -737,7 +755,8 @@ def card_row_list(ctx: Ctx, players: list[dict], key: str, notes: dict[str, str]
         ovr = (info or {}).get("ovr") or known.get("ovr")
         position = (info or {}).get("position") or (positions[0][0] if positions else None)
         with st.container(key=f"prow_{key}_{p['player_id']}"):
-            st.markdown(ui_parts.card_row(p, info, ovr=ovr, position=position, pay=(info or {}).get("pay", known.get("pay")),
+            st.markdown(ui_parts.card_row(p, info, grade=grade, ovr=ovr + GRADE_OVR[grade] if ovr else ovr, position=position,
+                                          pay=(info or {}).get("pay", known.get("pay")),
                                           foot=(info or {}).get("foot_lr") or known.get("foot"), crests=crests_of(ctx, info),
                                           note=(notes or {}).get(p["player_id"], "")), unsafe_allow_html=True)
             if st.button(f"{p['name']} · {p['season_short']} 보기", key=f"{key}_{p['player_id']}", width="stretch"):
