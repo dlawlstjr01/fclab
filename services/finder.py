@@ -240,6 +240,22 @@ def teamcolor_matches(text: str, teamcolors: list[dict]) -> list[dict]:
     return [tc for tc in teamcolors if tc["name"] in wanted or any(w in tc["name"].replace(" ", "") for w in themes)]
 
 
+def card_ok(f: Filters, spid: int, card: dict | None) -> bool:
+    """카드마다의 조건(시즌 · 포지션 · OVR · 급여 · 주발 · 약발)을 모아 둔 능력치(card_stats)로 — 능력치를 모르면 False.
+    OVR 범위는 f.grade(강화)의 OVR 로 본다. 포지션은 카드의 대표(첫) 포지션."""
+    if not card or not card.get("ovr"):
+        return False
+    bonus = GRADE_OVR.get(f.grade, 0)
+    main = (card.get("positions") or [(None, None)])[0][0]
+    foot = card.get("foot") or {}
+    side = foot.get("main")
+    weak = foot.get("R" if side == "L" else "L") if side else None
+    return all((not f.seasons or split_spid(spid)[0] in f.seasons, not f.positions or main in f.positions,
+                not f.ovr_min or card["ovr"] + bonus >= f.ovr_min, not f.ovr_max or card["ovr"] + bonus <= f.ovr_max,
+                not f.pay_min or (card.get("pay") or 0) >= f.pay_min, not f.pay_max or (card.get("pay") or 99) <= f.pay_max,
+                not f.foot or FOOT.get(f.foot) == {"R": 1, "L": 2}.get(side), not f.weak_foot or weak == f.weak_foot))
+
+
 def legend_pids(catalog) -> set[int]:
     """아이콘 카드가 있는 선수(pid) — 그 선수의 모든 카드를 레전드로 본다."""
     icons = {sid for sid, s in catalog.seasons.items() if "ICON" in s["className"].upper() or "TKI" in s["className"].upper()}
@@ -463,21 +479,10 @@ class CardFinder:
                 pids.add(r["spid"] % 1_000_000)
         spids = [spid for pid in sorted(pids) for spid in self.catalog.cards_of(pid)]
         known = self.db.card_stats(spids)
-        bonus = GRADE_OVR.get(f.grade, 0)
         rows = []
         for spid in spids:
             card = known.get(spid)
-            if not card or not card.get("ovr"):
-                continue
-            main = (card.get("positions") or [(None, None)])[0][0]
-            foot = card.get("foot") or {}
-            side = foot.get("main")
-            weak = foot.get("R" if side == "L" else "L") if side else None
-            checks = (not f.seasons or split_spid(spid)[0] in f.seasons, not f.positions or main in f.positions,
-                      not f.ovr_min or card["ovr"] + bonus >= f.ovr_min, not f.ovr_max or card["ovr"] + bonus <= f.ovr_max,
-                      not f.pay_min or (card.get("pay") or 0) >= f.pay_min, not f.pay_max or (card.get("pay") or 99) <= f.pay_max,
-                      not f.foot or FOOT.get(f.foot) == {"R": 1, "L": 2}.get(side), not f.weak_foot or weak == f.weak_foot)
-            if all(checks):
+            if card_ok(f, spid, card):
                 rows.append({"spid": spid, "name": card.get("name"), "ovr": card["ovr"], "pay": card.get("pay"),
                              "positions": card.get("positions") or [], "foot": card.get("foot"), "prices": {}})
         per_card = (f.name or f.league or f.teamcolor or f.teamcolor_any or f.teamcolor_also or f.traits or f.traits_any

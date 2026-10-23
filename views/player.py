@@ -331,8 +331,8 @@ def _card_panel(ctx: Ctx, player: dict, info: dict) -> None:
             st.caption("≈ 특정 능력치만 올리는 팀컬러가 포지션별 OVR 에 미치는 정도는 추정값입니다 (데이터센터 계산을 받지 못함). "
                        "능력치 숫자는 정확합니다.")
     icons = {tc["id"]: tc.get("icon", "") for tc in ctx.teamcolors.all()}
-    colors = [(group, t["name"], icons.get(t["id"], "")) for group in ("소속", "관계")
-              for t in (info.get("teamcolors") or {}).get(group, [])]
+    colors = list({(group, t["name"]): (group, t["name"], icons.get(t["id"], "")) for group in ("소속", "관계")
+                   for t in (info.get("teamcolors") or {}).get(group, [])}.values())   # 이름이 같은 팀컬러(갈래만 다른 것)는 한 번만
     left, right = st.columns(2, gap="medium")   # 아래 랭커 기록 칸과 같은 나눔 — 가장자리가 맞게
     left.markdown(
         '<div class="fc-stack">'

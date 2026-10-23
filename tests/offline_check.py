@@ -78,6 +78,14 @@ class FakeChat:
         if "FC 온라인 코치" in system:
             self.calls.append("coach")
             return SimpleNamespace(content="### 한 줄 진단\n테스트 진단 [근거 1].")
+        if "축구 자료 조사 도우미" in system:   # AI 로 찾기 1차 — 읽을 나무위키 문서
+            self.calls.append("namu_plan")
+            return SimpleNamespace(content='{"docs": ["발롱도르"], "keywords": ["역대 수상자", "남성"], "kind": "list"}')
+        if "축구 선수 명단을 정리하는 도우미" in system:   # AI 로 찾기 2차 — 한 줄에 한 명
+            self.calls.append("namu_list")
+            if "발롱도르" in messages[-1]["content"].split("[나무위키]")[0]:   # 조건 칸만 본다 (발췌에도 발롱도르가 있다)
+                return SimpleNamespace(content="\n".join(NAMU_ROWS))
+            return SimpleNamespace(content="손흥민 | - | 대한민국 | FW | 0 | 대한민국 국가대표 공격수 | N")
         if "선수 카드가 맞는지" in system:
             self.calls.append("explore")
             return SimpleNamespace(content='[{"no": 2, "match": true, "reason": "조건과 맞는 이유"}, '
@@ -85,6 +93,50 @@ class FakeChat:
                                            '{"no": 99, "match": true, "reason": "없는 번호"}]')
         self.calls.append("answer")
         return SimpleNamespace(content="데뷔 기록은 다음과 같습니다 [근거 1]. 클럽 경력 [근거 2, 99].")
+
+
+NAMU_ROWS = [
+    "이름 | 다른 표기 | 국적 | 포지션 | 마지막으로 뛴 해 | 근거 | 출처",   # 머리줄은 건너뛴다
+    "안드리 셰브첸코 | 안드리 셰우첸코 | 우크라이나 | FW | 2012 | 2004 발롱도르 | N",
+    "호나우지뉴 | - | 브라질 | MF | 2015 | 2005 발롱도르 | N",
+    "루이스 수아레스 | - | 스페인 | MF | 1973 | 1960 발롱도르 | N",
+    "가나다라마바 | - | 브라질 | FW | 1960 | 1960 발롱도르 | N",
+    "안드레아 피를로 | - | 이탈리아 | MF | 2017 | 발롱도르 수상자는 아니지만 2006 월드컵 우승 | K",
+    "호나우지뉴 | - | 브라질 | MF | 2015 | 2005 발롱도르 | N",
+]
+NAMU_HTML = ("<html><nav>최근 변경 · 특수 기능</nav><h1>발롱도르</h1>"
+             "<h2 class='x'><a id='s-1'>1.</a> <span>개요<span>[편집]</span></span></h2><div>1956년에 창설한 상.[1]</div>"
+             "<h2><a>2.</a> <span>역대 수상자</span></h2>"
+             "<h3><a>2.1.</a> <span>남성</span></h3><table><tr><td>2004</td><td>안드리 셰브첸코 ( AC 밀란 )</td></tr>"
+             "<tr><td>2005</td><td>호나우지뉴 ( FC 바르셀로나 )</td></tr><tr><td>1960</td><td>루이스 수아레스</td></tr>"
+             "<tr><td>1960</td><td>가나다라마바</td></tr></table>"
+             "<h3><a>2.2.</a> <span>여성</span></h3><div>아이타나 본마티</div>"
+             "<div>이 저작물은 CC BY-NC-SA 2.0 KR 에 따라 이용할 수 있습니다</div><footer>분류: 축구</footer></html>")
+NAMU_SEARCH_HTML = ('<section><div><h4><i class="ion-md-document"></i><a href="/w/%EB%B0%9C%EB%A1%B1%EB%8F%84%EB%A5%B4">'
+                    '발롱도르</a></h4><div>프랑스 풋볼이 주는 <span class="search-highlight">발롱도르</span></div></div>'
+                    '<div><h4><i></i><a href="/w/%ED%8A%B8%EB%A0%88%EB%B8%94">트레블</a></h4><div>한 시즌 세 대회 우승</div></div>'
+                    '</section>')
+
+
+class FakeNamu:
+    """나무위키 (가짜) — 검색 · 문서 모두 네트워크 없이. 부른 것을 남긴다."""
+    name = "나무위키 (가짜)"
+
+    def __init__(self):
+        self.calls: list[tuple[str, str]] = []
+
+    def search(self, query, db=None, limit=20):
+        from data_prep.namu import parse_search
+        self.calls.append(("search", query))
+        return parse_search(NAMU_SEARCH_HTML, limit)
+
+    def document(self, title, db=None):
+        from data_prep.namu import parse_document
+        self.calls.append(("doc", title))
+        return parse_document(NAMU_HTML, title) if title == "발롱도르" else None
+
+
+fake_namu = FakeNamu()
 
 
 class FakeWiki:
@@ -625,6 +677,57 @@ check([(v.club, v.club_history, v.league) for v in legend_league] == [("아스�
       and finder._variants(Filters(league="잉글랜드 프리미어리그")) == [Filters(league="잉글랜드 프리미어리그")],
       "AI 찾기: '프리미어리그 레전드' — 리그는 지금 소속이라 은퇴한 레전드가 없어, 그 리그 클럽마다 클럽 경력으로 묻는다 "
       "(현역 조건은 그대로 리그로)")
+from data_prep.namu import parse_document, parse_search  # noqa: E402
+from services.finder import legend_pids  # noqa: E402
+from services.namufind import NamuFinder, excerpt, keywords, match_name, name_index, parse_rows, similar  # noqa: E402
+
+doc = parse_document(NAMU_HTML, "발롱도르")
+men = next(s_ for s_ in doc["sections"] if s_["heading"] == "2.1. 남성")
+check([s_["heading"] for s_ in doc["sections"]] == ["1. 개요", "2.1. 남성", "2.2. 여성"]
+      and men["path"] == "2. 역대 수상자 > 2.1. 남성" and "2004 | 안드리 셰브첸코 ( AC 밀란 )" in men["text"]
+      and doc["sections"][0]["text"] == "1956년에 창설한 상." and "분류" not in str(doc) and "최근 변경" not in str(doc)
+      and parse_search(NAMU_SEARCH_HTML) == [{"title": "발롱도르", "snippet": "프랑스 풋볼이 주는 발롱도르"},
+                                             {"title": "트레블", "snippet": "한 시즌 세 대회 우승"}],
+      "나무위키 화면 → 글자: 제목마다 나누고 위 제목까지 길로(2. 역대 수상자 > 2.1. 남성), 표는 ' | ' · 줄로, 각주 · [편집] · "
+      "메뉴 · 저작권 안내 · 분류는 뺀다 / 검색 화면 → 제목 · 요약")
+picked = excerpt(doc, keywords("발롱도르 받은 선수", "역대 수상자 남성"))
+check(picked.startswith("## 2. 역대 수상자 > 2.1. 남성") and "본마티" not in picked,
+      "발췌: 명단 표(제목 길에 '역대 수상자 · 남성', 짧은 줄이 많은 부분)를 맨 앞에, 여성 부분은 뺀다 (FC 온라인은 남자 선수만)")
+rows_ = parse_rows("\n".join(NAMU_ROWS + ["설명 줄은 건너뛴다"]))
+check(len(rows_) == 6 and rows_[0] == {"name": "안드리 셰브첸코", "aliases": ["안드리 셰우첸코"], "nation": "우크라이나",
+                                       "pos": "FW", "last": 2012, "why": "2004 발롱도르"} and rows_[1]["aliases"] == [],
+      "2차 답(한 줄에 한 명 '이름 | 다른 표기 | 국적 | 포지션 | 마지막 해 | 근거 | 출처') 읽기 — 머리줄 · 설명 줄은 건너뛴다")
+index_ = name_index(catalog)
+check(similar("바비 찰튼", "보비 찰턴") >= 0.8 and similar("안드리 셰브첸코", "안드리 셰우첸코") >= 0.8
+      and similar("데니스 로", "데니스") == 0 and similar("플로리안 알베르트", "플로리안 비르츠") == 0
+      and similar("파올로 로시", "F. 로시") == 0 and match_name(index_, ["가나다라마바"])[0] == set()
+      and match_name(index_, ["안드리 셰브첸코"])[1] == "안드리 셰우첸코",
+      "3차 이름 맞추기: 같은 이름 → 이름 · 성이 비슷한 표기(바비 찰튼 = 보비 찰턴) — 한 단어 · 머리글자 이름은 같은 이름만 "
+      "('데니스 로' ≠ '데니스', '파올로 로시' ≠ 'F. 로시')")
+
+
+class NamuFinderStub:   # 데이터센터가 꺼진 조건 검색 — 레전드만 안다
+    enabled = False
+
+    def legends(self):
+        return legend_pids(catalog)
+
+
+chat_ = FakeChat()
+namu_finder = NamuFinder(fake_namu, db, catalog, NamuFinderStub(), chat_)
+found_ = namu_finder.run("발롱도르 받은 선수", None)
+names_ = {p_["name"]: p_ for p_ in found_["players"]}
+dropped_ = {d_["name"]: d_["reason"] for d_ in found_["dropped"]}
+check(set(names_) == {"안드리 셰브첸코", "호나우지뉴"} and names_["안드리 셰브첸코"]["db_name"] == "안드리 셰우첸코"
+      and all(p_["src"] == "나무위키" for p_ in found_["players"]) and found_["listed"] == 4 and found_["cited"] == 4
+      and [m_["name"] for m_ in found_["missing"]] == ["가나다라마바"] and "이름만 같은 다른 선수" in dropped_.get("루이스 수아레스", "")
+      and "안드레아 피를로" not in str(found_) and found_["docs"][0]["title"] == "발롱도르",
+      "AI 로 찾기 세 단계: 나무위키(검색 → 문서 '발롱도르') → AI 명단(같은 선수는 한 번, '수상자는 아니지만'은 뺀다) → DB "
+      "(셰브첸코 = 셰우첸코, 없는 선수 따로, 1960 루이스 수아레스 ≠ 지금의 루이스 수아레스 — 시대로)")
+calls_before = list(chat_.calls)
+again_ = namu_finder.run("발롱도르 받은 선수", None)
+check(chat_.calls == calls_before and [p_["name"] for p_ in again_["players"]] == [p_["name"] for p_ in found_["players"]],
+      "같은 조건은 하루 동안 나무위키 · AI 명단을 다시 만들지 않는다 (SQLite)")
 tc_level = {"level": 4, "count": 11, "effects": ["전체 능력치 +4", "볼 컨트롤 +3"]}
 enh_level = {"level": 2, "count": 8, "effects": ["전체 능력치 +4"]}
 cond = {"grade": 5, "enh_min": 8, "enh": {"name": "금빛 물결"}, "enh_level": enh_level, "tc": {"name": "첼시"},
@@ -839,6 +942,7 @@ empty_toml = toml.replace((tmp / "storage").as_posix(), (tmp / "empty_storage").
 shutil.copytree(real.storage_dir / "meta", tmp / "empty_storage" / "meta", dirs_exist_ok=True)
 with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(llm, "make_embeddings", fake_embeddings), \
         patch("data_prep.wiki_api.WikiClient", lambda *a_, **k: FakeWiki()), \
+        patch("data_prep.namu.client", lambda contact="": fake_namu), \
         patch("services.images.ImageCache._schedule", lambda self, url: None):   # 이미지도 받지 않는다 (네트워크 없음)
     os.environ["FCLAB_SETTINGS"] = str(tmp / "empty.toml")
     import streamlit as st  # noqa: E402
@@ -921,8 +1025,12 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
     at.button(key="nav_home").click().run()
     at.text_input(key="q").input("대한민국 출신 공격수").run()
     at.button(key="ai_search").click().run()
-    items = (at.session_state["explore_results"] or {}).get("items", [])
-    check(bool(items) and f"ai_{items[0]['player_id']}" in keys(at), f"AI로 찾기 → 조건에 맞는 카드 (F2011): {items}")
+    found_ai = at.session_state["explore_results"] or {}
+    son = [p_ for p_ in (found_ai.get("namu") or {}).get("players", []) if p_["name"] == "손흥민"]
+    check(not at.exception and found_ai.get("mode") == "namu" and bool(son) and f"ai0_{son[0]['spid']}" in keys(at)
+          and any("1차 나무위키" in m.value and "3차 FC 온라인 DB" in m.value for m in at.markdown)
+          and any("나무위키" in c.value and "CC BY-NC-SA" in c.value for c in at.caption),
+          "AI로 찾기 (F2011): 1차 나무위키 → 2차 AI 명단 → 3차 FC 온라인 DB — 세 단계 칸 · 손흥민 카드 타일 · 출처(라이선스)")
 
     at.text_input(key="q").input("태클이 좋은 수비형 미드필더").run()
     at.button(key="q_clear").click().run()   # AI 결과 지우기

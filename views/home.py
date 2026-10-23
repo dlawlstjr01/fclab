@@ -2,34 +2,150 @@
 
 from __future__ import annotations
 
-import streamlit as st
-
+from dataclasses import replace
 from html import escape
 
+import streamlit as st
+
+import config
+from data_prep import namu
 from data_prep.players import stat_values
 from services.explore import describe, explore_players, suggest_conditions
+from services.finder import Filters
+from services.namufind import NamuFinder
 from views.common import Ctx, back_button, daily_wait, friendly_error, get_player, log, search_players, tile_grid
 from views.widgets import season_family, season_select
 
 AI_PAGE = 12   # AI 찾기 결과 한 화면 (2줄 × 6장) — 많으면 ◀ ▶ 로 넘긴다
+AI_VIEWS = ("선수마다 대표 카드", "모든 시즌 카드")
+# 데이터센터 조건 검색으로도 찾을 만한 사실 — 이 중 하나라도 있으면 AI 명단 밖의 카드도 '그 밖의 카드'로 보인다
+FACTS = ("nation", "league", "club", "teamcolor", "teamcolor_any", "teamcolor_also", "player_teamcolors", "traits", "traits_any",
+         "seasons", "physical", "skill_moves", "reputation")
+
+
+def _facts(filters: Filters | None, condition: str) -> Filters | None:
+    """AI 명단과 함께 데이터센터 조건 검색으로도 찾을 조건 — 국적 · 리그 · 클럽 · 팀컬러(트레블 · 듀오) · 특성 같은 사실이 있을 때.
+    수상 · 업적 말로 읽은 시즌 팀컬러('발롱도르' → Ballon d'Or 시즌 카드)는 수상자와 다르다(후보도 든다) — '팀컬러'라고 말했을
+    때만 쓴다. 포지션 · 레전드만이면 None (전체에서 OVR 높은 카드일 뿐이라)."""
+    if filters is None or filters.empty():
+        return None
+    f = filters if "팀컬러" in condition.replace(" ", "") else replace(filters, player_teamcolors=())
+    return f if any(getattr(f, name) for name in FACTS) else None
 
 
 def _run_ai_search(ctx: Ctx, condition: str) -> None:
-    """말 → 조건(AI) → 데이터센터 선수 검색. 조건을 하나도 못 읽으면 분석해 둔 카드에서 뜻이 가까운 카드(예전 방식)."""
+    """말 → 1차 나무위키 → 2차 AI 가 조건에 맞는 선수를 모두 → 3차 FC 온라인 DB 와 맞추기 (services/namufind.py).
+    AI 가 읽은 조건(국적 · 포지션 · 레전드 …)은 3차에서 카드를 거르고 국적 · 클럽을 확인하는 데 쓴다.
+    국적 · 리그 · 클럽 · 팀컬러 같은 사실이 조건에 있으면 데이터센터 조건 검색의 다른 카드도 '그 밖의 카드'로 함께 보인다 (_facts).
+    AI 명단을 하나도 맞추지 못하면 데이터센터 조건 검색으로, 그것도 없으면 분석해 둔 카드에서 뜻이 가까운 카드(예전 방식)."""
     try:
-        filters, unknown = ctx.finder.parse(condition, ctx.model) if ctx.finder.enabled else (None, [])
-        if filters is not None and not filters.empty():
-            rows = ctx.finder.search(filters)
-            st.session_state.explore_results = {"condition": condition, "mode": "finder", "filters": filters,
-                                                "unknown": unknown, "spids": [r["spid"] for r in rows]}
+        with st.status("🤖 AI로 찾는 중… (1차 나무위키 → 2차 AI 명단 → 3차 FC 온라인 DB)", expanded=True) as status:
+            status.write("조건 읽기 — 국적 · 포지션 · 레전드 같은 칸 (AI)")
+            filters, unknown = ctx.finder.parse(condition, ctx.model) if ctx.finder.enabled else (None, [])
+            try:
+                result = NamuFinder(namu.client(config.wiki_contact()), ctx.db, ctx.catalog, ctx.finder,
+                                    ctx.model).run(condition, filters, progress=status.write)
+            except Exception as exc:  # noqa: BLE001 — AI 명단을 못 만들면 데이터센터 조건 검색으로
+                log.exception("AI 로 찾기 (나무위키 → AI 명단) 실패")
+                status.write(f"AI 명단을 만들지 못했습니다 — {friendly_error(exc)}")
+                result = None
+            extra = []
+            players = (result or {}).get("players", [])
+            facts = _facts(filters, condition) or (filters if not players and filters is not None and not filters.empty()
+                                                   else None)   # AI 명단이 비면 읽은 조건 그대로라도
+            if facts is not None and ctx.finder.enabled:
+                status.write("데이터센터 조건 검색 — 같은 조건의 다른 카드")
+                shown = {p["pid"] for p in players}
+                extra = [r["spid"] for r in ctx.finder.search(facts) if r["spid"] % 1_000_000 not in shown]
+            status.update(label=f"🤖 AI로 찾기 — {len((result or {}).get('players', []))}명 · 다른 카드 {len(extra)}장",
+                          state="complete", expanded=False)
+        if (result and result["players"]) or extra:
+            st.session_state.explore_results = {"condition": condition, "mode": "namu", "filters": filters,
+                                                "unknown": unknown, "namu": result, "extra": extra}
         else:
             found = explore_players(condition, ctx.store, ctx.model, ctx.by_id, ctx.settings)
             st.session_state.explore_results = {"condition": condition, **found}
-        st.session_state.ai_page = 0
+        st.session_state.ai_page = st.session_state.ai_page2 = 0
         ctx.db.log_search(condition)
     except Exception as exc:  # noqa: BLE001
         log.exception("AI 검색 실패")
         st.error(friendly_error(exc))
+
+
+def _pages(ctx: Ctx, spids: list[int], key: str, page_key: str, reasons: dict[str, str] | None = None) -> None:
+    """카드 타일을 한 화면 12장씩 (◀ ▶)."""
+    total = len(spids)
+    pages = (total + AI_PAGE - 1) // AI_PAGE
+    page = min(st.session_state.get(page_key, 0), pages - 1)
+    shown = [get_player(ctx, str(s)) for s in spids[page * AI_PAGE: (page + 1) * AI_PAGE]]
+    tile_grid(ctx, shown, key=f"{key}{page}", reasons=reasons)
+    if pages > 1:
+        prev_col, info_col, next_col = st.columns([1, 2, 1])
+        prev_col.button("◀ 이전", key=f"{key}_prev", disabled=page == 0, width="stretch",
+                        on_click=lambda: st.session_state.update({page_key: page - 1}))
+        info_col.markdown(f"<div style='text-align:center;padding-top:6px'>{page + 1} / {pages} · "
+                          f"{page * AI_PAGE + 1}~{min(total, (page + 1) * AI_PAGE)}번째</div>", unsafe_allow_html=True)
+        next_col.button("다음 ▶", key=f"{key}_next", disabled=page >= pages - 1, width="stretch",
+                        on_click=lambda: st.session_state.update({page_key: page + 1}))
+
+
+def _namu_results(ctx: Ctx, found: dict) -> None:
+    """AI 로 찾은 선수 — 세 단계(나무위키 문서 · AI 명단 · FC 온라인 DB)를 칸으로 보이고, 선수마다 대표 카드(조건에 맞는 카드 중
+    OVR 이 가장 높은 것) 또는 모든 시즌 카드를 12장씩. DB 에 없는 선수 · 조건으로 뺀 선수는 접어 둔다."""
+    res, filters = found.get("namu") or {}, found.get("filters")
+    players = res.get("players", [])
+    st.markdown(f'<div class="fc-section">🤖 AI로 찾기 — "{escape(found["condition"])}"<small>{len(players)}명 · 1차 나무위키 → '
+                '2차 AI 명단 → 3차 FC 온라인 DB 순서로 찾았습니다</small></div>', unsafe_allow_html=True)
+    if res:
+        docs = " · ".join(f'<a href="{escape(d["url"])}" target="_blank" rel="noopener">{escape(d["title"])}</a>'
+                          for d in res.get("docs", []))
+        first = (f"문서 {docs}" if docs else "읽은 문서 없음") + f" · 검색 결과 {res.get('search', 0)}건"
+        if res.get("error"):
+            first = f"닿지 않음 — {escape(res['error'])} (AI 지식만으로)"
+        cells = [("📚 1차 나무위키", first),
+                 ("🧠 2차 AI 명단", f"<b>{res.get('listed', 0)}명</b> — 나무위키 근거 {res.get('cited', 0)} · "
+                                   f"AI 지식 {res.get('listed', 0) - res.get('cited', 0)}"),
+                 ("🗂️ 3차 FC 온라인 DB", f"<b>{len(players)}명</b> 카드 있음 · DB 에 없음 {len(res.get('missing', []))} · "
+                                       f"조건으로 뺌 {len(res.get('dropped', []))}")]
+        st.markdown('<div class="fc-sum fc-steps">' + "".join(f"<div><span>{k}</span><small>{v}</small></div>" for k, v in cells)
+                    + "</div>", unsafe_allow_html=True)
+    # 실제로 쓴 조건만 — 수상 · 업적 말로 읽은 시즌 팀컬러(발롱도르 → Ballon d'Or 카드)는 '팀컬러'라고 말했을 때만 쓴다 (_facts)
+    used = filters if filters is None or "팀컬러" in found["condition"].replace(" ", "") else replace(filters, player_teamcolors=())
+    if used is not None and not used.empty():
+        read = "".join(f'<span class="fc-chip">{escape(c)}</span>' for c in used.chips(ctx.finder.season_names()))
+        st.markdown(f'<div class="fc-chips"><span class="fc-chip lead">AI가 읽은 조건</span>{read}</div>', unsafe_allow_html=True)
+    if found.get("unknown"):
+        st.caption("목록에서 찾지 못해 빼고 찾은 말: " + ", ".join(found["unknown"]))
+    if players:
+        st.session_state.setdefault("ai_view", AI_VIEWS[0])
+        view = st.segmented_control("보기", AI_VIEWS, key="ai_view", label_visibility="collapsed",
+                                    on_change=lambda: st.session_state.update(ai_page=0)) or AI_VIEWS[0]
+        reasons = {}
+        for p in players:
+            why = (p.get("why") or "조건에 맞음") + (" · AI 지식" if p.get("src") == "AI 지식" else "")
+            for s in (p["spids"] if view == AI_VIEWS[1] else [p["spid"]]):
+                reasons[str(s)] = why
+        spids = [s for p in players for s in (p["spids"] if view == AI_VIEWS[1] else [p["spid"]])]
+        _pages(ctx, spids, "ai", "ai_page", reasons)
+        if res.get("unsure"):
+            st.caption("국적 · 클럽을 데이터센터로 다 확인하지 못한 선수: " + ", ".join(res["unsure"]))
+    elif res:
+        st.info("AI 가 찾은 선수 중 FC 온라인에 카드가 있고 조건에 맞는 선수가 없습니다.")
+    left = res.get("missing", []) + res.get("dropped", [])
+    if left:
+        with st.expander(f"DB 에 없는 선수 · 조건으로 뺀 선수 ({len(left)}명)"):
+            lines = [f"- **{escape(m['name'])}** — FC 온라인에 카드가 없음" + (f" ({escape(m['why'])})" if m.get("why") else "")
+                     for m in res.get("missing", [])]
+            lines += [f"- **{escape(d['name'])}** — {escape(d['reason'])}" for d in res.get("dropped", [])]
+            st.markdown("\n".join(lines))
+    if found.get("extra"):
+        st.markdown(f'<div class="fc-section">📋 데이터센터 조건 검색 — 그 밖의 카드<small>{len(found["extra"])}장'
+                    f'{" (OVR 높은 순 200장까지)" if len(found["extra"]) >= 190 else ""} · AI 명단에 없어도 조건에 맞는 카드'
+                    '</small></div>', unsafe_allow_html=True)
+        _pages(ctx, found["extra"], "aix", "ai_page2")
+    if res:
+        st.caption(f"출처: 나무위키 ({res.get('license', 'CC BY-NC-SA 2.0 KR')}) — 선수 명단의 근거. 카드 · 포지션 · OVR 은 "
+                   "FC 온라인 데이터, 국적 · 클럽 조건은 데이터센터 선수 검색으로 확인합니다. AI 지식으로 넣은 선수는 따로 표시합니다.")
 
 
 def _finder_results(ctx: Ctx, found: dict) -> None:
@@ -115,13 +231,14 @@ def render(ctx: Ctx) -> None:
 
     pending = st.session_state.pop("pending_ai", None)
     if (ai_clicked and query.strip()) or pending:
-        with st.spinner("AI가 조건에 맞는 선수를 고르는 중... (메타데이터 색인 검색 → LLM 선별)"):
-            _run_ai_search(ctx, pending or query.strip())
+        _run_ai_search(ctx, pending or query.strip())   # 진행 상황은 그 안의 단계 상자(st.status)로
     elif ai_clicked:
         st.caption("찾고 싶은 조건을 먼저 적어 주세요.")
 
     found = st.session_state.explore_results
-    if found and found.get("mode") == "finder":
+    if found and found.get("mode") == "namu":
+        _namu_results(ctx, found)
+    elif found and found.get("mode") == "finder":
         _finder_results(ctx, found)
     elif found:
         items = [i for i in found["items"] if i["player_id"] in ctx.by_id]

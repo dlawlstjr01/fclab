@@ -726,7 +726,8 @@ def _tile_watch_live(ctx: Ctx, waiting: list[int]) -> None:
 
 
 def crests_of(ctx: Ctx, info: dict | None) -> list[tuple[str, str]]:
-    """국기 + 이 카드가 드는 소속 팀컬러 엠블럼 [(이름, 이미지 주소)] — 국가 팀컬러는 국기로 대신한다."""
+    """국기 + 이 카드가 드는 소속 팀컬러 엠블럼 [(이름, 이미지 주소)] — 국가 팀컬러는 국기로 대신한다.
+    이름이 같은 팀컬러(갈래만 다른 것 — Untouchable Champions 두 개)는 한 번만."""
     if not info:
         return []
     icons = st.session_state.get("_tc_icons")
@@ -737,7 +738,7 @@ def crests_of(ctx: Ctx, info: dict | None) -> list[tuple[str, str]]:
     out = [(info.get("nation", ""), info["nation_flag"])] if info.get("nation_flag") else []
     for t in (info.get("teamcolors") or {}).get("소속", []):
         icon, kind = icons.get(t["id"], ("", ""))
-        if icon and kind != "국가":
+        if icon and kind != "국가" and all(name != t["name"] and url != icon for name, url in out):
             out.append((t["name"], icon))
     return out
 

@@ -19,7 +19,8 @@ from data_prep.players import POSITION_GROUPS, SORT_LABELS, SORT_STATS, STATS
 from services.finder import Filters, club_label, members
 from services.insights import leaderboard
 from services.teamcolor import effect_bonus, enhance_details
-from views.common import Ctx, card_basics, daily_wait, friendly_error, get_player, open_player, tile_grid, with_saves
+from views.common import (Ctx, card_basics, crests_of, daily_wait, friendly_error, get_player, open_player, tile_grid,
+                          with_saves)
 from views.players import SAVE_NOTE
 
 APPLIED = "OVR (강화 · 팀컬러 적용)"   # 랭커 분석의 정렬 — 상세 조건의 강화 등급 · 강화 팀컬러 · 팀컬러를 더한 OVR
@@ -219,21 +220,52 @@ def _daily_board(ctx: Ctx) -> None:
               kpi=lambda p: f"{escape(label)} <b>{daily_value(order, by_id[p['player_id']]['stats'])}</b>")
     st.markdown(f'<div class="fc-section">📋 순위<small>{len(rows)}장 · 상세보기를 누르면 선수 페이지</small></div>',
                 unsafe_allow_html=True)
+    items = []
     for rank, r in enumerate(rows, start=1):
-        p = players[str(r["spid"])]
         stats = " · ".join((f"<b>{DAILY_STATS[k]} {daily_value(k, r['stats'])}</b>" if k == order
                             else f"{DAILY_STATS[k]} {daily_value(k, r['stats'])}") for k in SHOWN_STATS if k in r["stats"])
-        grade_text = f" · +{r['grade']}강" if r.get("grade") else ""
+        items.append({"rank": rank, "player": players[str(r["spid"])], "grade": r.get("grade") or 1, "ovr": r["ovr"],
+                      "position": r["position"], "pay": r.get("pay"), "stats": stats})
+    rank_rows(ctx, items, "drank_open")   # 같은 카드가 강화 등급만 달리 두 번 나올 수 있다 — 키에 순위가 들어간다
+
+
+def rank_rows(ctx: Ctx, items: list[dict], key: str) -> None:
+    """순위 줄 — 👤 선수 찾기 목록과 같은 줄(카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 / 시즌 이름 · 주발 / 국적 · 팀컬러 /
+    요약 능력치 / 특성 · OVR) 앞에 순위, 밑에 그 카드의 랭커 기록, 오른쪽에 상세보기.
+    items = [{rank, player, grade, ovr, position, pay, stats(HTML)}]. 카드 상세(국적 · 팀컬러 · 특성 · 능력치)를 받는 동안에는
+    2초마다 이 목록만 다시 그린다."""
+    spids = [it["player"]["spid"] for it in items]
+    ctx.cards.want(spids)
+    if ctx.cards.pending(spids):
+        _rank_rows_live(ctx, items, key)
+    else:
+        _rank_rows_draw(ctx, items, key)
+
+
+@st.fragment(run_every=2)
+def _rank_rows_live(ctx: Ctx, items: list[dict], key: str) -> None:
+    left = _rank_rows_draw(ctx, items, key)
+    if left:
+        st.caption(f"⏳ 카드 상세(국적 · 팀컬러 · 특성 · 능력치)를 데이터센터에서 받는 중 — {left}장 남음")
+    else:
+        st.rerun()   # 다 받았다 — 한 번 다시 그려 멈춘 목록으로
+
+
+def _rank_rows_draw(ctx: Ctx, items: list[dict], key: str) -> int:
+    spids = [it["player"]["spid"] for it in items]
+    infos = ctx.cards.get(spids)
+    known = ctx.db.card_stats([s for s in spids if s not in infos])
+    for it in items:
+        p = it["player"]
+        info, row = infos.get(p["spid"]), known.get(p["spid"]) or {}
         line_col, btn = st.columns([6, 1], vertical_alignment="center")
-        line_col.markdown(
-            f'<div class="fc-line daily"><div class="rk">{rank}</div>'
-            f'<div class="cv">{ui_parts.card_visual(p, r["ovr"], r["position"])}</div>'
-            f'<div><div class="nm">{escape(p["name"])} <span class="sb">{escape(p["season_short"])} · {escape(r["position"])}'
-            f'{grade_text}</span>{ui_parts.pay_badge(r.get("pay"))}</div>'
-            f'<div class="st">{stats}</div></div></div>', unsafe_allow_html=True)
-        # 같은 카드가 강화 등급만 달리 두 번 나올 수 있다 — 키에 순위를 넣는다
-        btn.button("상세보기", key=f"drank_open_{rank}_{r['spid']}", on_click=open_player, args=(str(r["spid"]),),
-                   width="stretch")
+        line_col.markdown(ui_parts.card_row(p, info, grade=it["grade"], ovr=it["ovr"], position=it["position"], pay=it["pay"],
+                                            foot=(info or {}).get("foot_lr") or row.get("foot"), crests=crests_of(ctx, info),
+                                            rank=it["rank"], extra=it["stats"], on_card=True), unsafe_allow_html=True)
+        if btn.button("상세보기", key=f"{key}_{it['rank']}_{p['spid']}", width="stretch"):
+            open_player(p["player_id"])   # 조각(fragment) 안에서도 화면이 바뀌게 — 콜백 대신 눌린 뒤 앱 전체를 다시
+            st.rerun()
+    return ctx.cards.pending(spids)
 
 
 def render(ctx: Ctx) -> None:
@@ -315,6 +347,8 @@ def _ranker_board(ctx: Ctx) -> None:
     per_page = 20
     pages = (len(rows) + per_page - 1) // per_page
     page = min(st.session_state.get("rank_page", 0), pages - 1)
+    grade = max(cond["grade"], cond["enh_min"] or 1) if cond else 1   # 상세 조건의 강화 등급으로 보인다
+    items = []
     for rank, r in enumerate(rows[page * per_page : (page + 1) * per_page], start=page * per_page + 1):
         p = r["player"]
         if p.get("position_group") == "골키퍼":   # 골 · 도움 · 태클 대신 선방 · 패스
@@ -329,16 +363,12 @@ def _ranker_board(ctx: Ctx) -> None:
             ovr_text = f"OVR {r['applied']}" + (f" ({r['applied_note']})" if r.get("applied_note") else "")
             stats = (f"<b>{escape(ovr_text)}</b>" if key == "applied" else escape(ovr_text)) + " · " + stats
         card = basics.get(p["spid"]) or {}
-        line, btn = st.columns([6, 1], vertical_alignment="center")
-        line.markdown(
-            f'<div class="fc-line daily"><div class="rk">{rank}</div>'
-            f'<div class="cv">{ui_parts.card_visual(p, card.get("ovr"), card.get("position"))}</div>'
-            f'<div><div class="nm">{escape(p["name"])} <span class="sb">{escape(p["season_short"])} · '
-            f'{escape(", ".join(p["positions"]))} · {p["ranker"]["match_count"]}경기</span>'
-            f'{ui_parts.pay_badge(card.get("pay"))}</div>'
-            f'<div class="st">{stats}</div></div></div>', unsafe_allow_html=True)
-        btn.button("상세보기", key=f"rank_open_{p['player_id']}", on_click=open_player, args=(p["player_id"],),
-                   width="stretch")
+        base = card.get("ovr")
+        items.append({"rank": rank, "player": p, "grade": grade, "pay": card.get("pay"),
+                      "ovr": r["applied"] if r.get("applied") is not None else (base + GRADE_OVR[grade] if base else None),
+                      "position": card.get("position") or next(iter(p.get("positions") or []), None),
+                      "stats": f"랭커 {p['ranker']['match_count']}경기 · {stats}"})
+    rank_rows(ctx, items, "rank_open")
     if pages > 1:
         prev_col, info_col, next_col = st.columns([1, 2, 1])
         prev_col.button("← 이전", key="rank_prev", disabled=page == 0, width="stretch",

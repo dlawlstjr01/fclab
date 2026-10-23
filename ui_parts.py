@@ -42,6 +42,8 @@ CARD_CSS = """
   line-height: 1; z-index: 1; text-shadow: 0 0 3px rgba(0,0,0,.9), 0 1px 3px rgba(0,0,0,.7); }
 .fc-cv .ov b { font-size: calc(var(--w) * 24cqw); font-weight: 900; color: #fff; letter-spacing: -.02em; }
 .fc-cv .ov span { font-size: calc(var(--w) * 15cqw); font-weight: 900; }
+/* 숫자 · 포지션은 한 줄 — 선수 줄(.fc-prow)의 overflow-wrap: anywhere 를 물려받으면 좁은 카드에서 '144'가 '14 / 4'로 갈라졌다 */
+.fc-cv .ov b, .fc-cv .ov span { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
 /* 밝은 카드(ICON · ICON TM 등)는 OVR 을 어둡게 — 흰 배경에 흰 글자가 묻히지 않게 */
 .fc-cv.light .ov { text-shadow: 0 0 3px rgba(255,255,255,.85); }
 .fc-cv.light .ov b { color: #1d1608; }
@@ -311,7 +313,8 @@ div[class*="st-key-tile_ssn_"] .stMarkdown div {{ margin-bottom: 0 !important; }
 .fc-prow .l4 {{ display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: {t['ink2']}; margin-top: 4px;
   font-variant-numeric: tabular-nums; }}
 .fc-prow .l4 span {{ white-space: nowrap; }}
-.fc-prow .l4 b {{ color: {t['ink']}; font-weight: 700; }}
+.fc-prow .l4 b {{ font-weight: 700; }}
+.fc-prow .l4 b:not([class^="o"]) {{ color: {t['ink']}; }}   /* 숫자 색(o120 …)이 있으면 FC 온라인처럼 값마다 색 */
 .fc-prow .l4 b.up {{ color: {ACCENT}; }}
 .fc-prow .note {{ font-size: 12px; color: {t['ink2']}; margin-top: 4px; }}
 .fc-prow .side {{ display: flex; align-items: center; gap: 12px; }}
@@ -324,7 +327,14 @@ div[class*="st-key-tile_ssn_"] .stMarkdown div {{ margin-bottom: 0 !important; }
   font-variant-numeric: tabular-nums; }}
 .fc-prow .ovr small {{ display: block; font-size: 10.5px; font-weight: 700; color: {t['muted']}; text-align: right; }}
 .fc-prow .wait {{ font-size: 11.5px; color: {t['muted']}; }}
+/* 파워 랭킹 순위 줄 — 선수 목록 줄 앞에 순위, 밑에 그 카드의 랭커 기록 (기준 기록은 굵게) */
+.fc-prow.ranked {{ grid-template-columns: 28px 96px minmax(0, 1fr) auto; }}   /* 카드 그림 위 OVR · 포지션이 TOP 3 타일만큼 보이게 (74px 면 포지션 글자가 8px) */
+.fc-prow .rk {{ text-align: center; font-size: 17px; font-weight: 900; color: {ACCENT}; font-variant-numeric: tabular-nums; }}
+.fc-prow .st {{ font-size: 12.5px; color: {t['ink2']}; margin-top: 6px; padding-top: 6px; border-top: 1px dashed {t['grid']};
+  font-variant-numeric: tabular-nums; }}
+.fc-prow .st b {{ color: {t['ink']}; }}
 @media (max-width: 760px) {{ .fc-prow {{ grid-template-columns: 58px minmax(0, 1fr); }}
+  .fc-prow.ranked {{ grid-template-columns: 22px 72px minmax(0, 1fr); }}
   .fc-prow .side {{ grid-column: 1 / -1; justify-content: space-between; }} }}
 /* 좁은 칸용 (스쿼드 메이커 자리별 선수) — 오른쪽은 OVR 만, 특성은 아래 줄. 이름 한 줄 · 나머지는 덩어리째 줄바꿈 */
 .fc-prow.compact {{ grid-template-columns: 56px minmax(0, 1fr) auto; gap: 10px; padding: 9px 12px 9px 8px; }}
@@ -437,7 +447,8 @@ div[class*="st-key-prow_"]:hover .fc-place {{ border-color: rgba(22,224,138,.55)
 .fc-ovrgrid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }}
 .fc-ovrgrid div {{ border-radius: 10px; padding: 6px 4px; text-align: center; background: {t['track']}; }}
 .fc-ovrgrid div span {{ display: block; font-size: 11px; font-weight: 800; }}
-.fc-ovrgrid div b {{ font-size: 17px; color: {t['ink']}; font-variant-numeric: tabular-nums; }}
+.fc-ovrgrid div b {{ font-size: 17px; font-variant-numeric: tabular-nums; }}
+.fc-ovrgrid div b:not([class^="o"]) {{ color: {t['ink']}; }}   /* 숫자 색(o120 …)이 없는 칸만 — 있으면 FC 온라인처럼 값마다 색 */
 .fc-ovrgrid div.best {{ box-shadow: inset 0 0 0 2px {ACCENT}; }}
 .fc-ovrgrid .empty {{ background: transparent; }}
 .fc-abil {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 18px; }}
@@ -568,6 +579,13 @@ div.st-key-gr_actions button p, div[class*="st-key-again_"] button p {{ white-sp
 .fc-sum b.txt {{ font-size: 15px; }}
 .fc-sum b .star-up {{ display: inline; font-size: inherit; color: {ACCENT}; }}   /* 강화로 더해진 개인기 별 — 초록 = 오른 만큼 */
 .fc-sum small {{ font-size: 11px; color: {t['ink2']}; }}
+/* AI 로 찾기의 세 단계 (나무위키 · AI 명단 · FC 온라인 DB) */
+.fc-steps > div {{ flex: 1 1 230px; }}
+.fc-steps span {{ font-size: 12px; font-weight: 800; color: {t['ink']}; margin-bottom: 3px; }}
+.fc-steps small {{ font-size: 12.5px; line-height: 1.55; }}
+.fc-steps small b {{ font-size: 15px; color: {t['ink']}; }}
+.fc-steps a {{ color: {ACCENT}; font-weight: 700; text-decoration: none; }}
+.fc-steps a:hover {{ text-decoration: underline; }}
 
 /* 선수 상세의 Q&A · AI 리포트 · 근거 문서 — 이 서비스의 중심(근거 기반 질문 답변)이라 초록 테두리 상자로 눈에 띄게 */
 .st-key-qa_zone {{ border: 1.5px solid rgba(22,224,138,.55); border-radius: 18px; padding: 14px 18px 16px;
@@ -978,13 +996,16 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
              position: str | None = None, pay: int | None = None, foot: dict | None = None,
              crests: list[tuple[str, str]] = (), exact: bool = True, note: str = "", ovr_label: str = "",
              wait_text: str = "국적 · 팀컬러 불러오는 중…", compact: bool = False,
-             tc_summary: dict[str, int] | None = None) -> str:
+             tc_summary: dict[str, int] | None = None, rank: int | None = None, extra: str = "",
+             on_card: bool = False) -> str:
     """선수 줄 (공식 스쿼드 메이커의 선수 목록처럼) — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 / 시즌 이름 · 주발 /
     국적 · 팀컬러 / 요약 능력치(강화 반영) / 특성 · OVR. info(카드 상세)가 아직 없으면 그 칸은 '불러오는 중'.
 
     compact = 좁은 칸(스쿼드 메이커의 자리별 선수 · AI 추천 결과)용 — 오른쪽에는 OVR 만 두고 특성은 아래 줄로 내려,
     가운데 글자 칸이 넓어진다. 이름은 한 줄(넘치면 …), 시즌 · 급여 · 강화 · 주발은 덩어리째 줄을 바꾼다.
-    tc_summary = 팀컬러로 더 오른 요약 능력치 {스피드: +N} (스쿼드 메이커) — 더해서 초록으로 보인다."""
+    tc_summary = 팀컬러로 더 오른 요약 능력치 {스피드: +N} (스쿼드 메이커) — 더해서 초록으로 보인다.
+    rank = 맨 앞 순위 번호, extra = 맨 밑 한 줄 HTML (파워 랭킹 — 그 카드의 랭커 기록). on_card = 카드 그림 위에도 OVR(강화 반영) ·
+    포지션 (TOP 3 타일처럼)."""
     info = info or {}
     grade = grade or 1
     position = position or info.get("position") or ""
@@ -1023,9 +1044,12 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
                 + f'</div><div class="side"><div class="ovr">{shown}{label}</div></div></div>')
     l1 = position_badge(position) + season_img + name_html + pay_html + grade_badge(grade)
     l2 = escape(player.get("season", "")) + (f"<i>·</i>{foot_html}" if foot_html else "")
-    return (f'<div class="fc-prow"><div>{card_visual(player)}</div><div>'
+    rank_html = f'<div class="rk">{rank}</div>' if rank is not None else ""
+    extra_html = f'<div class="st">{extra}</div>' if extra else ""
+    visual = card_visual(player, ovr, position) if on_card else card_visual(player)
+    return (f'<div class="fc-prow{" ranked" if rank is not None else ""}">{rank_html}<div>{visual}</div><div>'
             f'<div class="l1">{l1}</div><div class="l2">{l2}</div><div class="l3">{l3}</div>'
-            + (f'<div class="l4">{l4}</div>' if l4 else "") + note_html
+            + (f'<div class="l4">{l4}</div>' if l4 else "") + note_html + extra_html
             + f'</div><div class="side"><div class="traits">{trait_html}</div><div class="ovr">{shown}{label}</div></div></div>')
 
 

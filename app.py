@@ -31,4 +31,5 @@ common.tile_watch(ctx)
 
 st.divider()
 st.caption("Data based on NEXON Open API · 시세 · 능력치 · 특성: FC 온라인 데이터센터 · "
-           "선수 문서: 한국어 위키백과 (CC BY-SA 4.0) · 넥슨 · EA 와 관계없는 학습용 프로젝트입니다.")
+           "선수 문서: 한국어 위키백과 (CC BY-SA 4.0) · AI로 찾기 명단 근거: 나무위키 (CC BY-NC-SA 2.0 KR) · "
+           "넥슨 · EA 와 관계없는 학습용 프로젝트입니다.")
