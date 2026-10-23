@@ -501,8 +501,11 @@ def render(ctx: Ctx) -> None:
         if not history:
             st.caption("커리어 · 이적 · 대표팀 · 우승 · 플레이 스타일을 물어보세요. 위키백과와 넥슨 데이터에 있는 것으로 근거와 함께 "
                        "답하고, 문서에 없으면 AI 일반 지식 답을 따로 표시해 보여 줍니다.")
-        for col, sample in zip(st.columns(len(SAMPLES)), SAMPLES):   # 추천 질문은 대화가 이어져도 늘 (Q&A 탭에만)
-            col.button(sample, key=f"sample_{sample}", on_click=_ask, args=(sample,), width="stretch")
+        # 추천 질문은 대화가 이어져도 늘 (Q&A 탭에만). 글자만큼의 버튼을 한 줄에 — 넷으로 똑같이 나누면 1024px 에서
+        # 긴 질문만 두 줄로 감겨 높이가 들쭉날쭉했다. 넘치면 버튼째 다음 줄로
+        with st.container(horizontal=True, gap="small", key="qa_samples"):
+            for sample in SAMPLES:
+                st.button(sample, key=f"sample_{sample}", on_click=_ask, args=(sample,))
         for message in history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])

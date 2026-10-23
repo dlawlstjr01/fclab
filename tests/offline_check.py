@@ -879,6 +879,10 @@ check(SQUAD_ADAPT == 5 and ovr_at("LCM", 5, grid, adapt=SQUAD_ADAPT) == (117 + G
       "스쿼드의 자리 OVR 에는 적응도 5(+4) — 등록 선수는 경기 없이도 적응도 5 (2025 겨울 업데이트 · 데이터센터 적응도는 1 · 5 두 단계)")
 check("[...data.slots].sort((a, b) => a.y - b.y)" in PITCH_JS,
       "경기장: 위에서 아래 순서로 그린다 — 자리를 붙여 놓아도 아래 카드의 OVR 을 위 카드의 시세 줄이 가리지 않게")
+page_css = ui_parts.css("dark")
+check('.st-key-cmpsel > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2)'
+      in page_css and '.st-key-cmpsel [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]' not in page_css,
+      "비교: ⇄ 칸 52px 규칙은 A · ⇄ · B 맨 위 줄에만 — A · B 칸 안의 줄(선수 고르기 타일 · 다시 고르기)의 둘째 칸이 52px 로 찌그러지던 것")
 check(parse_foot("<strong>L5</strong> – R3") == {"L": 5, "R": 3, "main": "L"} and parse_foot("L5 - <strong>R5</strong>")["main"] == "R",
       "주발 — 굵은 쪽이 주발 (선수 검색 · 선수 정보 둘 다)")
 gold = parse_teamcolor_detail('<div class="tit"><strong>금빛 물결 : </strong><span>8강 이상의 선수들로 구성된 팀컬러입니다.</span></div>'

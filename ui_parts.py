@@ -603,15 +603,21 @@ div.st-key-gr_actions button p, div[class*="st-key-again_"] button p {{ white-sp
   .st-key-pcbonus [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{ flex: 1 1 calc(33% - 1rem) !important;
     min-width: 140px; }}
 }}
-/* 비교의 A · ⇄ · B — 넓은 화면은 한 줄(⇄ 칸은 52px), 900px 이하는 A → ⇅ → B 로 위아래 (가운데 칸이 비율이면 좁을 때 찌그러졌다) */
-.st-key-cmpsel [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap; }}
-.st-key-cmpsel [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {{
+/* 비교의 A · ⇄ · B — 넓은 화면은 한 줄(⇄ 칸은 52px), 900px 이하는 A → ⇅ → B 로 위아래 (가운데 칸이 비율이면 좁을 때 찌그러졌다).
+   맨 위 줄에만 — 'A · B 칸 안의 줄'(선수 고르기 타일 · 다시 고르기)까지 잡으면 둘째 칸이 52px 로 찌그러졌다 */
+.st-key-cmpsel > [data-testid="stHorizontalBlock"],
+.st-key-cmpsel > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap; }}
+.st-key-cmpsel > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2),
+.st-key-cmpsel > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {{
   flex: 0 0 52px !important; width: 52px !important; min-width: 52px; }}
 .fc-swapgap {{ height: 88px; }}
 @media (max-width: 900px) {{
-  .st-key-cmpsel [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .4rem; }}
-  .st-key-cmpsel [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
-  .st-key-cmpsel [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {{
+  .st-key-cmpsel > [data-testid="stHorizontalBlock"],
+  .st-key-cmpsel > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .4rem; }}
+  .st-key-cmpsel > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+  .st-key-cmpsel > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+  .st-key-cmpsel > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2),
+  .st-key-cmpsel > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {{
     flex: 1 1 100% !important; width: 100% !important; min-width: 0; }}
   .fc-swapgap {{ display: none; }}
   .st-key-cmp_swap .stButton {{ display: flex; justify-content: center; }}
