@@ -871,7 +871,7 @@ check(slot_ovr({"ovr": 125, "usage_position": "ST"}, "LS", 3) == (125 + GRADE_OV
       and slot_ovr({"ovr": 120, "positions": [("CAM", 120)]}, "ST", 1) == (120, False),
       "AI 추천 스쿼드도 같은 자리 OVR — 데일리 차트 카드는 쓰인 포지션의 OVR")
 from data_prep.tactics import SQUAD_ADAPT  # noqa: E402
-from views.pitch import PITCH_JS  # noqa: E402
+from views.pitch import PITCH_JS, pitch_slots  # noqa: E402
 
 check(SQUAD_ADAPT == 5 and ovr_at("LCM", 5, grid, adapt=SQUAD_ADAPT) == (117 + GRADE_OVR[5] + 4, True)
       and ovr_at("RB", 3, None, [("ST", 110)], 105, adapt=SQUAD_ADAPT) == (105 + GRADE_OVR[3] + 4, False)
@@ -879,6 +879,69 @@ check(SQUAD_ADAPT == 5 and ovr_at("LCM", 5, grid, adapt=SQUAD_ADAPT) == (117 + G
       "스쿼드의 자리 OVR 에는 적응도 5(+4) — 등록 선수는 경기 없이도 적응도 5 (2025 겨울 업데이트 · 데이터센터 적응도는 1 · 5 두 단계)")
 check("[...data.slots].sort((a, b) => a.y - b.y)" in PITCH_JS,
       "경기장: 위에서 아래 순서로 그린다 — 자리를 붙여 놓아도 아래 카드의 OVR 을 위 카드의 시세 줄이 가리지 않게")
+from datetime import datetime as _dt, timedelta as _td  # noqa: E402
+
+from data_prep.player_builder import CardCatalog  # noqa: E402
+from services.ranker_refresh import RankerRefresher, with_latest  # noqa: E402
+
+ranker_status = {"matchCount": 20, "goal": 1.2, "assist": 0.4, "shoot": 3.1, "effectiveShoot": 2.0, "passTry": 20.0,
+                 "passSuccess": 17.0, "dribbleTry": 4.0, "dribbleSuccess": 3.0, "tackle": 0.5, "block": 0.1}
+asked_pairs = []
+fake_cat_r = SimpleNamespace(position_names={25: "ST", 27: "LW"}, nexon=SimpleNamespace(
+    api_key="k", remaining=900,
+    ranker_stats=lambda pairs, matchtype: asked_pairs.extend(pairs) or [
+        {"spid": spid, "spPosition": po, "createDate": "2026-10-23T04:00:00", "status": ranker_status} for spid, po in pairs]))
+fake_cat_r.ranker_at = lambda pairs, matchtype: CardCatalog.ranker_at(fake_cat_r, pairs, matchtype)
+rdb = FcDb(tmp / "storage" / "ranker_refresh.db")
+refresher = RankerRefresher(fake_cat_r, rdb, 50, hours=4, reserve=300)
+old_players = [{"spid": 101, "player_id": "101", "ranker": {"position": "ST", "date": "2026-10-20", "match_count": 7}},
+               {"spid": 102, "player_id": "102", "ranker": {"position": "LW", "date": "2026-10-24", "match_count": 9}},
+               {"spid": 103, "player_id": "103", "ranker": None}]
+was_due = refresher.due()
+done_r = refresher.run_once(old_players)
+merged = with_latest(old_players, rdb.ranker_latest())
+fake_cat_r.nexon.remaining = 120
+skipped = refresher.run_once(old_players)
+check(was_due and asked_pairs == [(101, 25), (102, 27)] and done_r["updated"] == 2 and done_r["newest"] == "2026-10-23"
+      and not refresher.due() and refresher.due(_dt.now() + _td(hours=5)) and "skipped" in skipped
+      and merged[0]["ranker"]["date"] == "2026-10-23" and merged[0]["ranker"]["match_count"] == 20
+      and merged[1]["ranker"]["date"] == "2026-10-24" and old_players[0]["ranker"]["date"] == "2026-10-20"
+      and rdb.last_ranker_refresh()["cards"] == 2,
+      "랭커 기록 다시 받기: 카드마다 대표 포지션 한 칸만 묻고(ST · LW), 더 새 집계일만 덮어 쓴다(원래 목록은 그대로) · 4시간이 지나야 "
+      "다음 차례 · 오늘 남은 호출이 적으면 쉰다")
+place_html = ui_parts.place_row({"name": "가", "player_id": "1"}, rank=1, ovr=120, exact=True, position="ST", grade=5, pay=20,
+                                total=200, cap=310, nation=None, crests=[],
+                                traits=[{"name": "중거리 슛 선호", "icon": "https://x/new.png", "new": True},
+                                        {"name": "주발 선호", "icon": "https://x/old.png", "new": False}])
+head_html = ui_parts.place_head("ST")
+check('class="trs"' in place_html and "중거리 슛 선호 · 신규 특성" in place_html and "주발 선호" not in place_html
+      and "<span>신규 특성</span>" in head_html,
+      "선수 배치 창: 줄마다 그 카드의 보유 신규 특성 아이콘 (일반 특성은 빼고) — 머리줄에도 '신규 특성' 칸")
+abil_html = ui_parts.ability_table({"속력": 120, "가속력": 118}, {"스피드": 119})
+check('<div class="grp"><span>스피드</span><b class="o110">119</b></div>' in abil_html
+      and 'class="it">속력<span><b class="o120">120</b>' in abil_html,
+      "선수 능력치: 묶음 이름(스피드)과 묶음 값(119)을 나눠 값은 오른쪽 끝에 — 세부 능력치 줄은 그대로")
+from views import tactics as tactics_view  # noqa: E402
+import streamlit as _st  # noqa: E402
+
+
+class _State(dict):
+    """st.session_state 대신 — 키(['a'])와 속성(.a) 둘 다로 쓴다."""
+    def __getattr__(self, key):
+        return self.get(key)
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
+click_state = _State({"tac_squad": {"CAM": None, "ST": {"pid": "866200104", "grade": 5}},
+                      "tac_pitch": {"clicked": {"code": "CAM", "at": 1}}})
+with patch.object(_st, "session_state", click_state):
+    tactics_view._open_slot("tac")
+empty_slots = pitch_slots(["CAM"], {"CAM": None}, "4-2-3-1", empty_hint="+ 눌러서 넣기")
+check((click_state.get("place_dialog") or {}).get("code") == "CAM" and "if (data.clickable) setTriggerValue" in PITCH_JS
+      and "+ 눌러서 넣기" in empty_slots[0]["html"],
+      "스쿼드 경기장: 빈 자리를 누르면 그 자리의 선수 배치 창 ('➕ 추가'와 같다) — 빈 자리 밑에 '+ 눌러서 넣기'")
 page_css = ui_parts.css("dark")
 check('.st-key-cmpsel > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2)'
       in page_css and '.st-key-cmpsel [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]' not in page_css,
@@ -1039,6 +1102,30 @@ print("\nF2009 · F2010 · F2011 · F2012 · NF2004  화면 (AppTest)")
 os.environ["FCLAB_SETTINGS"] = str(tmp / "settings.toml")
 
 
+def _pager_app(pages: int = 25) -> None:
+    import streamlit as st
+    from views.widgets import pager, set_page
+    st.session_state.setdefault("pg", 0)
+    pager("t", st.session_state.pg, pages, set_page, ("pg",))
+
+
+pg_app = AppTest.from_function(_pager_app, default_timeout=30)
+pg_app.run()
+first_keys = {str(b.key) for b in pg_app.button}
+pg_app.button(key="t_pg_next10").click().run()
+block2 = {str(b.key) for b in pg_app.button}
+jumped = pg_app.session_state["pg"]
+pg_app.button(key="t_pg_back").click().run()
+back = pg_app.session_state["pg"]
+pg_app.button(key="t_pg_3").click().run()
+small = AppTest.from_function(_pager_app, args=(3,), default_timeout=30)
+small.run()
+check({"t_pg_0", "t_pg_9", "t_pg_next10", "t_pg_next", "t_pg_back", "t_pg_back10"} <= first_keys and "t_pg_10" not in first_keys
+      and jumped == 10 and {"t_pg_10", "t_pg_19"} <= block2 and back == 9 and pg_app.session_state["pg"] == 3
+      and {str(b.key) for b in small.button} == {"t_pg_0", "t_pg_1", "t_pg_2"},
+      "쪽 번호: 1~10 을 번호로 누르고, 10쪽 이상이면 » 로 10쪽 뒤(11쪽 → 11~20 번호) · ‹ 로 한 쪽 앞 — 3쪽뿐이면 번호만")
+
+
 def app() -> AppTest:
     return AppTest.from_file(str(ROOT / "app.py"), default_timeout=90)
 
@@ -1170,22 +1257,34 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
           and any("랭커 기록으로 줄 세웠습니다" in m.value for m in at.markdown),
           f"AI로 찾기: '랭커가 골을 많이 넣는 선수' → 랭커 기록 순위 (나무위키 · LLM 을 거치지 않는다 · {len(found_rk.get('rows', []))}장)")
 
-    at.text_input(key="q").input("태클이 좋은 수비형 미드필더").run()
     at.button(key="q_clear").click().run()   # AI 결과 지우기
     at.text_input(key="q").input("태클이 좋은 수비형 미드필더").run()
-    check(any(k.startswith("sem_") for k in keys(at)) or any("AI로 찾기" in i.value for i in at.info),
-          "이름이 아닌 조건을 적으면: 분석된 선수 중 비슷한 선수 + 'AI로 찾기' 안내 (요청 7)")
+    auto_found = at.session_state["explore_results"] or {}
+    check(not at.exception and auto_found.get("condition") == "태클이 좋은 수비형 미드필더"
+          and any("AI로 찾습니다" in c.value for c in at.caption),
+          "홈 검색: 이름이 맞는 카드가 없으면 그 말로 🤖 AI로 찾기를 바로 (사용자 요청 — 버튼을 누르지 않아도)")
+    at.run()
+    check(not any("AI로 찾습니다" in c.value for c in at.caption)
+          and (at.session_state["explore_results"] or {}).get("condition") == "태클이 좋은 수비형 미드필더",
+          "홈 검색: 같은 말은 한 번만 — 다시 그려도 AI 검색을 다시 하지 않는다")
     at.button(key="q_clear").click().run()
     check(at.session_state["q"] == "" and any(k.startswith("top_") for k in keys(at)), "✕ 지우기 → 첫 화면 (요청 6)")
 
     at.button(key="nav_players").click().run()
     check(at.session_state["page"] == "players" and any(k.startswith("pl_") for k in keys(at)),
           "상단 '선수' → 전체 선수 찾기 페이지 (요청 8)")
+    check(not any(k in keys(at) for k in ("pl_prev", "pl_next")), "선수 찾기: '← 이전 · 다음 →' 버튼 대신 쪽 번호 (views/widgets.pager)")
     at.button(key="back_players").click().run()
     check(at.session_state["page"] == "home", "← 뒤로 → 이전 페이지 (요청 6 · 8)")
     at.button(key="nav_ranking").click().run()
+    hero_db = FcDb(tmp / "storage" / "fclab.db")
+    hero_card = sample[0]
+    hero_db.put_ranker_latest({hero_card["spid"]: {**hero_card["ranker"], "date": "2099-01-01"}})
+    hero_db.log_ranker_refresh(len(sample), 1, "2099-01-01", 1)
     at.button(key="nav_brand").click().run()
-    check(at.session_state["page"] == "home", "로고를 누르면 홈 (요청 1)")
+    hero_html = next((m.value for m in at.markdown if 'class="fc-hero"' in m.value), "")
+    check(at.session_state["page"] == "home" and "<b>2099-01-01</b>랭커 집계일 · " in hero_html and "갱신" in hero_html,
+          "로고를 누르면 홈 (요청 1) · 홈 숫자: 다시 받은 랭커 기록이 들어오면 '랭커 집계일'이 가장 새 집계일로, 갱신 시각과 함께")
 
     at.button(key="nav_ranking").click().run()
     check(not at.exception and any(k.startswith("rank_open_") for k in keys(at)), "파워 랭킹: 줄마다 상세보기 버튼 (요청 9)")

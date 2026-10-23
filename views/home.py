@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 from html import escape
 
 import streamlit as st
@@ -13,9 +14,9 @@ from data_prep.players import stat_values
 from services import aisearch
 from services.explore import describe, explore_players, suggest_conditions
 from views.common import Ctx, back_button, daily_wait, friendly_error, get_player, log, search_players, tile_grid
-from views.widgets import season_family, season_select
+from views.widgets import pager, season_family, season_select, set_page
 
-AI_PAGE = 12   # AI 찾기 결과 한 화면 (2줄 × 6장) — 많으면 ◀ ▶ 로 넘긴다
+AI_PAGE = 12   # AI 찾기 결과 한 화면 (2줄 × 6장) — 많으면 쪽 번호로 넘긴다
 AI_VIEWS = ("선수마다 대표 카드", "모든 시즌 카드")
 
 
@@ -41,20 +42,16 @@ def _run_ai_search(ctx: Ctx, condition: str) -> None:
 
 
 def _pages(ctx: Ctx, spids: list[int], key: str, page_key: str, reasons: dict[str, str] | None = None) -> None:
-    """카드 타일을 한 화면 12장씩 (◀ ▶)."""
+    """카드 타일을 한 화면 12장씩 (쪽 번호)."""
     total = len(spids)
     pages = (total + AI_PAGE - 1) // AI_PAGE
     page = min(st.session_state.get(page_key, 0), pages - 1)
     shown = [get_player(ctx, str(s)) for s in spids[page * AI_PAGE: (page + 1) * AI_PAGE]]
     tile_grid(ctx, shown, key=f"{key}{page}", reasons=reasons)
     if pages > 1:
-        prev_col, info_col, next_col = st.columns([1, 2, 1])
-        prev_col.button("◀ 이전", key=f"{key}_prev", disabled=page == 0, width="stretch",
-                        on_click=lambda: st.session_state.update({page_key: page - 1}))
-        info_col.markdown(f"<div style='text-align:center;padding-top:6px'>{page + 1} / {pages} · "
-                          f"{page * AI_PAGE + 1}~{min(total, (page + 1) * AI_PAGE)}번째</div>", unsafe_allow_html=True)
-        next_col.button("다음 ▶", key=f"{key}_next", disabled=page >= pages - 1, width="stretch",
-                        on_click=lambda: st.session_state.update({page_key: page + 1}))
+        pager(key, page, pages, set_page, (page_key,))
+        st.markdown(f'<div class="fc-pageinfo">{page * AI_PAGE + 1}~{min(total, (page + 1) * AI_PAGE)}번째 · 모두 {total}장</div>',
+                    unsafe_allow_html=True)
 
 
 def _namu_results(ctx: Ctx, found: dict) -> None:
@@ -152,13 +149,7 @@ def _ranker_results(ctx: Ctx, found: dict) -> None:
         tile_grid(ctx, shown, key=f"air{page}", badges={k: v for k, v in ranks.items()},
                   kpi=lambda p: f"{escape(name)} <b>{by_spid[p['spid']]['value']:.{0 if unit else 2}f}{unit}</b> · "
                                 f"{by_spid[p['spid']]['matches']}경기")
-        if pages > 1:
-            prev_col, info_col, next_col = st.columns([1, 2, 1])
-            prev_col.button("◀ 이전", key="air_prev", disabled=page == 0, width="stretch",
-                            on_click=lambda: st.session_state.update(ai_page=page - 1))
-            info_col.markdown(f"<div style='text-align:center;padding-top:6px'>{page + 1} / {pages}</div>", unsafe_allow_html=True)
-            next_col.button("다음 ▶", key="air_next", disabled=page >= pages - 1, width="stretch",
-                            on_click=lambda: st.session_state.update(ai_page=page + 1))
+        pager("air", page, pages, set_page, ("ai_page",))
     else:
         st.info("이 포지션 · 구분으로 분석해 둔 랭커 기록이 아직 없습니다 — 아래 어제 데일리 기록을 보세요.")
     daily = found.get("daily")
@@ -217,18 +208,24 @@ def _clear() -> None:
     st.session_state.q = ""
     st.session_state.q_season = None
     st.session_state.explore_results = None
+    st.session_state.auto_ai = None
 
 
 def render(ctx: Ctx) -> None:
     analyzed = sum(1 for p in ctx.players if p.get("ranker"))
     dates = [p["ranker"]["date"] for p in ctx.players if p.get("ranker")]
     new_cards = ctx.db.new_cards(days=7)
+    refreshed = ctx.db.last_ranker_refresh()   # 몇 시간마다 다시 받은 때 (services/ranker_refresh.py)
+    when = ""
+    if refreshed:
+        at = refreshed["at"]
+        when = f" · {at[11:16]} 갱신" if at[:10] == str(date.today()) else f" · {at[5:10]} {at[11:16]} 갱신"
     st.markdown(
         '<div class="fc-hero"><h1>FC 온라인 선수, <b>한 번에</b> 찾고 비교하세요</h1>'
         "<p>랭커 실전 기록 · 실제 커리어 · AI 분석을 근거와 함께. 이름으로 찾거나, 원하는 선수를 말로 설명해 보세요.</p>"
         f'<div class="stats"><div><b>{len(ctx.catalog.cards):,}</b>전체 카드</div>'
         f'<div><b>{len(ctx.catalog.by_pid):,}</b>선수</div><div><b>{analyzed:,}</b>랭커 분석 카드</div>'
-        f'<div><b>{max(dates) if dates else "-"}</b>랭커 집계일</div>'
+        f'<div><b>{max(dates) if dates else "-"}</b>랭커 집계일{when}</div>'
         + (f'<div><b>+{new_cards:,}</b>최근 7일 새 카드</div>' if new_cards else "") + "</div></div>",
         unsafe_allow_html=True,
     )
@@ -257,8 +254,18 @@ def render(ctx: Ctx) -> None:
                   width="content")
 
     pending = st.session_state.pop("pending_ai", None)
-    if (ai_clicked and query.strip()) or pending:
-        _run_ai_search(ctx, pending or query.strip())   # 진행 상황은 그 안의 단계 상자(st.status)로
+    text = query.strip()
+    # 이름 · 시즌 검색 — 입력하는 즉시 (네트워크 없이). 보이는 카드는 백그라운드로 미리 분석해 둔다.
+    results = search_players(ctx, query, season) if (text or season) else []
+    # 이름이 맞는 카드가 없으면 그 말을 조건으로 보고 🤖 AI로 찾기를 바로 — 같은 말은 한 번만 (다시 그릴 때마다 묻지 않게)
+    previous = st.session_state.explore_results or {}
+    if (not pending and not ai_clicked and text and not season and not results and len(text) >= 2
+            and previous.get("condition") != text and st.session_state.get("auto_ai") != text):
+        st.session_state.auto_ai = text
+        pending = text
+        st.caption(f"'{text}' 이(가) 이름에 들어간 카드가 없어 🤖 AI로 찾습니다.")
+    if (ai_clicked and text) or pending:
+        _run_ai_search(ctx, pending or text)   # 진행 상황은 그 안의 단계 상자(st.status)로
     elif ai_clicked:
         st.caption("찾고 싶은 조건을 먼저 적어 주세요.")
 
@@ -281,8 +288,6 @@ def render(ctx: Ctx) -> None:
         else:
             st.info("조건에 맞는 선수를 찾지 못했습니다. 조건을 바꿔 보세요.")
 
-    # 이름 · 시즌 검색 — 입력하는 즉시 (네트워크 없이). 보이는 카드는 백그라운드로 미리 분석해 둔다.
-    results = search_players(ctx, query, season) if (query.strip() or season) else []
     ctx.prefetcher.schedule([p["spid"] for p in results if p.get("lite")])
     if results:   # 이름이 맞는 카드가 있을 때만 '이름 검색 결과' — 조건을 적었을 때 '0장'을 보이지 않는다
         title = f"'{query.strip()}'" if query.strip() else ""
@@ -292,9 +297,8 @@ def render(ctx: Ctx) -> None:
         st.markdown(f'<div class="fc-section">🔍 {title} 이름 검색 결과<small>{where} · {len(results)}장'
                     f'{" (더 있으면 이름을 더 정확히)" if len(results) >= 24 else ""}</small></div>', unsafe_allow_html=True)
         tile_grid(ctx, results, key="res")
-    elif query.strip() and not found:
-        st.info(f"'{query.strip()}' 이(가) 이름에 들어간 카드는 없습니다. 조건(예: 일본 출신 미드필더)이라면 **🤖 AI로 찾기**를 누르세요 — "
-                "국적 · 리그 · 클럽 · 포지션 · 특성으로 전체 카드에서 찾습니다.")
+    elif text and not found:
+        st.info(f"'{text}' 이(가) 이름에 들어간 카드도, AI로 찾은 카드도 없습니다. 이름이나 조건(예: 일본 출신 미드필더)을 바꿔 보세요.")
     if searching:
         return
 

@@ -25,7 +25,7 @@ from data_prep.tactics import OVR_GRID
 from views.common import (Ctx, add_to_compare, back_button, by_ovr, card_basics, daily_wait, dialog_open, enrich, friendly_error,
                           get_player, log, render_sources, run_with_status, tile_grid, with_saves)
 from views.prices import compare_prices, price_section
-from views.widgets import card_picker, grade_buttons
+from views.widgets import card_picker, grade_buttons, pager
 
 SAMPLES = ["프로 데뷔는 언제, 어느 팀에서 했어?", "국가대표 경력을 알려 줘", "가장 큰 우승 경력은?", "어떤 플레이 스타일이야?"]
 OTHER_PAGE = 12   # 다른 시즌 카드 한 번에 (2줄 × 6장)
@@ -554,15 +554,7 @@ def render(ctx: Ctx) -> None:
         # 넘길 때마다 새 칸이라 CSS 애니메이션이 다시 돈다 (다음은 오른쪽에서, 이전은 왼쪽에서 — ui_parts.css 의 st-key-slide_*)
         with st.container(key=f"slide_{st.session_state.get('other_dir', 'none')}_{page}"):
             tile_grid(ctx, shown, key="other", cols=6)
-        if pages > 1:
-            prev_col, dots_col, next_col = st.columns([1, 2, 1], vertical_alignment="center")
-            prev_col.button("◀ 이전", key="other_prev", disabled=page == 0, width="stretch",
-                            on_click=_turn_seasons, args=(player["player_id"], page - 1))
-            dots_col.markdown('<div class="fc-dots">' + "".join("●" if i == page else "○" for i in range(pages)) + "</div>",
-                              unsafe_allow_html=True)
-            left = len(others) - (page + 1) * OTHER_PAGE
-            next_col.button(f"더보기 ▶ ({left}장)" if left > 0 else "더보기 ▶", key="other_next", disabled=page >= pages - 1,
-                            width="stretch", on_click=_turn_seasons, args=(player["player_id"], page + 1))
+        pager("other", page, pages, _turn_seasons, (player["player_id"],))
 
     # ── 맨 마지막: 네트워크가 필요한 칸 채우기 (백그라운드가 끝냈으면 즉시) ──
     if player["player_id"] not in ctx.curated_ids:

@@ -194,6 +194,11 @@ div[class*="st-key-wrap_"] [data-testid="stColumn"] {{ min-width: min(100%, 120p
     min-width: max-content; }}
 }}
 .st-key-wrap_search button p {{ white-space: nowrap; }}
+/* 쪽 번호 (views/widgets.pager) — 1 2 3 …, 10쪽 이상이면 ‹ › « » */
+div[class*="st-key-pager_"] {{ margin-top: 6px; }}
+div[class*="st-key-pager_"] button {{ min-width: 38px; min-height: 34px; padding: 0 10px; }}
+div[class*="st-key-pager_"] button p {{ white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 700; }}
+.fc-pageinfo {{ text-align: center; font-size: 12px; color: {t['muted']}; margin: 2px 0 6px; }}
 div[class*="st-key-grid_"] [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; }}
 div[class*="st-key-grid_"] [data-testid="stColumn"] {{ min-width: 150px; flex: 1 1 150px; }}
 @media (max-width: 1100px) {{
@@ -371,11 +376,11 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-placehd {{ display: flex; align-items: center; gap: 10px; font-size: 14px; color: {t['ink2']}; margin-bottom: 2px; }}
 .fc-placehd b {{ color: {t['ink']}; }}
 .fc-placehd .pay {{ margin-left: auto; font-size: 13px; }}
-.fc-place {{ display: grid; grid-template-columns: 24px 44px minmax(0, 1fr) 60px 100px 84px 40px 80px; gap: 8px;
+.fc-place {{ display: grid; grid-template-columns: 24px 44px minmax(0, 1fr) 60px 100px 84px 84px 40px 80px; gap: 8px;
   align-items: center; padding: 6px 12px 6px 6px; border-radius: 12px; background: {t['surface']}; border: 1px solid {t['border']}; }}
 .fc-place.head {{ background: transparent; border: none; padding: 0 12px 0 6px; font-size: 11.5px; font-weight: 700; color: {t['muted']}; }}
-.fc-place.head span:nth-child(4), .fc-place.head span:nth-child(7) {{ text-align: center; }}
-.fc-place.head span:nth-child(8) {{ text-align: right; }}
+.fc-place.head span:nth-child(4), .fc-place.head span:nth-child(8) {{ text-align: center; }}
+.fc-place.head span:nth-child(9) {{ text-align: right; }}
 .fc-place .rk {{ font-size: 15px; font-weight: 900; color: {t['muted']}; text-align: center; font-variant-numeric: tabular-nums; }}
 .fc-place .who {{ min-width: 0; }}
 .fc-place .l1 {{ display: flex; align-items: center; gap: 6px; min-width: 0; }}
@@ -389,6 +394,9 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 .fc-place .nat, .fc-place .tcs {{ display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 11.5px; color: {t['ink2']}; }}
 .fc-place .nat small {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 .fc-place .nat img, .fc-place .tcs img {{ height: 18px; max-width: 26px; object-fit: contain; display: block; }}
+.fc-place .trs {{ display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 11.5px; color: {t['ink2']}; }}
+.fc-place .trs img {{ width: 24px; height: 24px; padding: 2px; border-radius: 6px; background: {t['raise']};
+  border: 1px solid #f2c94c; box-sizing: border-box; display: block; }}
 .fc-place .pay {{ display: flex; justify-content: center; }}
 .fc-place .pay .fc-pay {{ width: 24px; height: 26px; font-size: 11px; }}
 .fc-place .tot {{ font-size: 15px; font-weight: 800; color: {t['ink']}; text-align: right; font-variant-numeric: tabular-nums; }}
@@ -398,7 +406,8 @@ div[class*="st-key-prow_"]:hover .fc-prow {{ border-color: rgba(22,224,138,.55);
 div[class*="st-key-prow_place_"] {{ margin-bottom: 2px; }}
 div[class*="st-key-prow_"]:hover .fc-place {{ border-color: rgba(22,224,138,.55); }}
 @media (max-width: 760px) {{ .fc-place {{ grid-template-columns: 20px 38px minmax(0, 1fr) 46px 34px 62px; }}
-  .fc-place .nat, .fc-place .tcs, .fc-place.head span:nth-child(5), .fc-place.head span:nth-child(6) {{ display: none; }} }}
+  .fc-place .nat, .fc-place .tcs, .fc-place .trs, .fc-place.head span:nth-child(5), .fc-place.head span:nth-child(6),
+  .fc-place.head span:nth-child(7) {{ display: none; }} }}
 .fc-tile .cvw {{ width: 104px; margin: 24px auto 2px; }}
 .fc-tile .meta {{ display: flex; align-items: center; justify-content: center; gap: 7px; margin: 3px 0 1px;
   font-size: 12px; color: {t['ink2']}; }}
@@ -473,7 +482,9 @@ div[class*="st-key-prow_"]:hover .fc-place {{ border-color: rgba(22,224,138,.55)
 /* 세부 능력치 (ability_table) — 공식 데이터센터처럼 위에서 아래로 이어지는 세 단, 묶음 이름은 첫 능력치와 붙여 둔다 */
 .fc-abil.flow {{ display: block; column-count: 3; column-gap: 22px; }}
 .fc-abil.flow .hd, .fc-abil.flow .it {{ break-inside: avoid; }}
-.fc-abil.flow .grp {{ margin: 0; padding: 9px 0 2px; }}
+.fc-abil.flow .grp {{ margin: 0; padding: 12px 0 4px; display: flex; align-items: baseline; justify-content: space-between;
+  font-size: 15.5px; font-weight: 900; color: {t['ink']}; border-bottom: 1.5px solid {t['edge']}; letter-spacing: -0.01em; }}
+.fc-abil.flow .grp b {{ font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums; }}
 .fc-abil.flow > .hd:first-child .grp {{ padding-top: 0; }}
 .fc-abil.flow .it {{ padding: 4px 0; }}
 .fc-abil.flow .it.focus {{ padding: 4px 6px; }}
@@ -1104,14 +1115,15 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
 def place_head(code: str) -> str:
     """선수 배치 창의 머리줄 — 순위 · 선수 · 그 자리 OVR · 국가 · 팀컬러 · 급여 · 예상 총급여."""
     return (f'<div class="fc-place head"><span>#</span><span></span><span>선수</span><span>{escape(code)} OVR</span>'
-            '<span>국가</span><span>팀컬러</span><span>급여</span><span>예상 총급여</span></div>')
+            '<span>국가</span><span>팀컬러</span><span>신규 특성</span><span>급여</span><span>예상 총급여</span></div>')
 
 
 def place_row(player: dict, *, rank: int | None, ovr: int | None, exact: bool, position: str, grade: int, pay: int | None,
               total: int | None, cap: int, nation: tuple[str, str] | None, crests: list[tuple[str, str]], note: str = "",
-              teamcolor: str | None = None, waiting: bool = False) -> str:
+              teamcolor: str | None = None, waiting: bool = False, traits: list[dict] | None = None) -> str:
     """선수 배치 창의 한 줄 (공식 '선수 배치'처럼) — 순위 · 카드 그림 · 포지션 · 시즌 · 이름 · 그 자리 OVR · 국기 · 팀컬러 엠블럼 ·
-    급여 · 이 카드를 넣었을 때의 총급여(넘으면 빨강). teamcolor = 스쿼드 팀컬러에 드는 카드면 그 이름 (팀컬러 우선)."""
+    급여 · 이 카드를 넣었을 때의 총급여(넘으면 빨강). teamcolor = 스쿼드 팀컬러에 드는 카드면 그 이름 (팀컬러 우선).
+    traits = 카드의 특성 목록 (카드 상세) — 그중 신규 특성을 아이콘으로 (3개까지, 더 있으면 +N)."""
     season_icon = image(player.get("season_img"))
     season = f'<img class="ssn" src="{escape(season_icon)}" alt="">' if season_icon else ""
     shown = "-" if ovr is None else f'<b class="{stat_class(ovr)}">{ovr}</b>{"" if exact else "<small>*</small>"}'
@@ -1121,6 +1133,12 @@ def place_row(player: dict, *, rank: int | None, ovr: int | None, exact: bool, p
     icons = "".join(f'<span class="tip" data-tip="{escape(name)}"><img src="{escape(image(url))}" alt="{escape(name)}"></span>'
                     for name, url in crests[:3] if image(url)) or ('<small class="wait">…</small>' if waiting else "-")
     tc = f'<span class="tcmark" title="스쿼드 팀컬러에 드는 카드">🎨 {escape(teamcolor)}</span>' if teamcolor else ""
+    fresh = [t for t in traits or [] if t.get("new")]
+    new_traits = "".join(f'<span class="tip" data-tip="{escape(t["name"])} · 신규 특성"><img src="{escape(image(t["icon"]))}" '
+                         f'alt="{escape(t["name"])}"></span>' for t in fresh[:3] if image(t["icon"]))
+    if len(fresh) > 3:
+        new_traits += f"<small>+{len(fresh) - 3}</small>"
+    new_traits = new_traits or ('<small class="wait">…</small>' if waiting else "-")
     over = total is not None and total > cap
     total_html = f'<b class="{"over" if over else ""}">{total}</b><small>/{cap}</small>' if total is not None else "-"
     sub = escape(player.get("season", "")) + (f" · {escape(note)}" if note else "")
@@ -1128,6 +1146,7 @@ def place_row(player: dict, *, rank: int | None, ovr: int | None, exact: bool, p
             f'<div class="who"><div class="l1">{position_badge(position)}{season}<b class="nm">{escape(player["name"])}</b>'
             f'{grade_badge(grade)}</div><div class="l2">{sub}{tc}</div></div>'
             f'<div class="ovr">{shown}</div><div class="nat">{flag}</div><div class="tcs">{icons}</div>'
+            f'<div class="trs">{new_traits}</div>'
             f'<div class="pay"><span class="fc-pay">{pay if pay is not None else "?"}</span></div><div class="tot">{total_html}</div></div>')
 
 
@@ -1163,7 +1182,7 @@ def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0
     focus = {능력치: 더한 값} — 팀컬러가 따로 올려 주는 능력치를 강조한다 ('전체 능력치' 말고 그 팀컬러만의 것)."""
     parts = []
     for group, names in ABILITY_GROUPS.items():
-        head = f' <b class="{stat_class(summary[group] + bonus)}">{summary[group] + bonus}</b>' if group in summary else ""
+        head = f'<b class="{stat_class(summary[group] + bonus)}">{summary[group] + bonus}</b>' if group in summary else ""
         items = []
         for name in names:
             if name in stats:
@@ -1173,7 +1192,7 @@ def ability_table(stats: dict[str, int], summary: dict[str, int], bonus: int = 0
                 items.append(f'<div class="it{mark}">{escape(name)}<span><b class="{stat_class(value)}">{value}</b>'
                              f'{_up(value, (base or {}).get(name))}</span></div>')
         if items:   # 묶음 이름은 첫 능력치와 한 덩어리 — 단이 바뀌어도 이름만 홀로 남지 않게
-            parts.append(f'<div class="hd"><div class="grp">{group}{head}</div>{items[0]}</div>{"".join(items[1:])}')
+            parts.append(f'<div class="hd"><div class="grp"><span>{group}</span>{head}</div>{items[0]}</div>{"".join(items[1:])}')
     # 공식 데이터센터처럼 위에서 아래로 이어서 세 단 — 묶음마다 3칸 격자로 두면 2 · 5개 묶음 뒤에 빈칸이 생겨 줄이 들쭉날쭉했다
     return f'<div class="fc-abil flow">{"".join(parts)}</div>'
 

@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS card_pay_history (spid INTEGER, at TEXT, pay INTEGER,
 CREATE TABLE IF NOT EXISTS stats_crawl (
     part TEXT PRIMARY KEY, season INTEGER, filter TEXT NOT NULL, cards INTEGER, passes INTEGER, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS squads (name TEXT PRIMARY KEY, data TEXT NOT NULL, saved_at TEXT);
+CREATE TABLE IF NOT EXISTS ranker_latest (spid INTEGER PRIMARY KEY, data TEXT NOT NULL, refreshed_at TEXT);
+CREATE TABLE IF NOT EXISTS ranker_refresh_log (at TEXT PRIMARY KEY, cards INTEGER, updated INTEGER, newest TEXT, calls INTEGER);
 """
 STAT_PASSES = 9          # 선수 검색 한 번에 능력치 4칸 — 36칸(능력치 34 + 키 · 몸무게)을 다 받으려면 9번
 GK_KEEP_DAYS = 30       # 넥슨 약관 — 저장한 데이터는 30일 안의 것만 쓴다
@@ -70,6 +72,7 @@ class FcDb:
         self.ranker_ttl = timedelta(hours=ranker_ttl_hours)
         self._lock = threading.RLock()
         self._players: list[dict] | None = None   # all_players 의 메모리 사본 (put_player 가 비운다)
+        self._ranker_latest: tuple | None = None   # ranker_latest 의 메모리 사본 (표가 바뀌면 다시 읽는다)
         self._db = sqlite3.connect(self.path, timeout=15, check_same_thread=False)
         with self._conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -122,6 +125,38 @@ class FcDb:
             if self._players is None:
                 self._players = [json.loads(d) for (d,) in conn.execute("SELECT data FROM players ORDER BY name")]
             return list(self._players)
+
+    # ── 다시 받은 대표 포지션 랭커 기록 (services/ranker_refresh.py — 몇 시간마다) ──────────────
+
+    def put_ranker_latest(self, rows: dict[int, dict]) -> int:
+        """카드마다 다시 받은 대표 포지션 랭커 기록을 둔다 — 넣은 카드 수를 돌려준다."""
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._conn() as conn:
+            conn.executemany("INSERT OR REPLACE INTO ranker_latest (spid, data, refreshed_at) VALUES (?, ?, ?)",
+                             [(spid, json.dumps(row, ensure_ascii=False), now) for spid, row in rows.items()])
+            self._ranker_latest = None
+        return len(rows)
+
+    def ranker_latest(self) -> dict[int, dict]:
+        """다시 받은 대표 포지션 랭커 기록 {spid: ranker} — 화면마다 JSON 을 다시 풀지 않게 메모리 사본을 쓰고,
+        표가 바뀌었을 때만(마지막으로 받은 때 · 줄 수) 다시 읽는다 (다른 연결 · 다른 프로세스가 넣어도 보이게)."""
+        with self._conn() as conn:
+            stamp = conn.execute("SELECT MAX(refreshed_at), COUNT(*) FROM ranker_latest").fetchone()
+            if self._ranker_latest is None or self._ranker_latest[0] != stamp:
+                self._ranker_latest = (stamp, {spid: json.loads(data)
+                                               for spid, data in conn.execute("SELECT spid, data FROM ranker_latest")})
+            return dict(self._ranker_latest[1])
+
+    def log_ranker_refresh(self, cards: int, updated: int, newest: str | None, calls: int) -> None:
+        with self._conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO ranker_refresh_log VALUES (?, ?, ?, ?, ?)",
+                         (datetime.now().isoformat(timespec="seconds"), cards, updated, newest, calls))
+
+    def last_ranker_refresh(self) -> dict | None:
+        """마지막으로 랭커 기록을 다시 받은 때 {at, cards, updated, newest, calls} — 없으면 None."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT at, cards, updated, newest, calls FROM ranker_refresh_log ORDER BY at DESC LIMIT 1").fetchone()
+        return dict(zip(("at", "cards", "updated", "newest", "calls"), row)) if row else None
 
     # ── 랭커 포지션별 기록 ───────────────────────────────────────
 

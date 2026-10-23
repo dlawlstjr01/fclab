@@ -133,6 +133,24 @@ class CardCatalog:
             })
         return by_card
 
+    def ranker_at(self, pairs: list[tuple[int, str]], matchtype: int) -> dict[int, dict]:
+        """(카드, 포지션 이름) 쌍마다 그 포지션의 랭커 기록 한 줄 — {spid: ranker} (선수의 ranker 와 같은 모양, 날짜는 글자).
+        카드마다 대표 포지션 한 칸만 묻는다 (28칸을 다 묻는 ranker_rows 의 28분의 1)."""
+        number = {name: no for no, name in self.position_names.items()}
+        asked = [(spid, number[name]) for spid, name in pairs if name in number]
+        out = {}
+        for r in self.nexon.ranker_stats(asked, matchtype=matchtype):
+            s = r["status"]
+            out[r["spid"]] = {
+                "position": self.position_names[r["spPosition"]], "match_count": s["matchCount"],
+                "date": datetime.fromisoformat(r["createDate"]).date().isoformat(),
+                "goal": s["goal"], "assist": s["assist"], "shoot": s["shoot"], "effective_shoot": s["effectiveShoot"],
+                "pass_try": s["passTry"], "pass_success": s["passSuccess"],
+                "dribble_try": s["dribbleTry"], "dribble_success": s["dribbleSuccess"],
+                "tackle": s["tackle"], "block": s["block"],
+            }
+        return out
+
     def make_player(self, spid: int, rows: list[dict], newest: date, check_image: bool = True) -> dict:
         season_id, pid = split_spid(spid)
         season = self.seasons.get(season_id, {})

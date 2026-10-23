@@ -63,6 +63,8 @@ PITCH_CSS = ui_parts.CARD_CSS + """
   display: flex; align-items: center; justify-content: center; box-sizing: border-box; color: #dfe6f3; font-size: 12px;
   font-weight: 900; }
 .slot .ps { font-size: 10px; color: #cfe9dc; text-shadow: 0 1px 2px rgba(0,0,0,.85); white-space: nowrap; }
+.slot:has(.empty) { cursor: pointer; }
+.slot:hover .empty { border-color: #16e08a; color: #16e08a; background: rgba(22,224,138,.12); }
 @media (max-width: 640px) { .fc-pitch2 { --card: 18%; } .pc .price { font-size: 9px; } }
 """
 
@@ -81,7 +83,8 @@ export default function(component) {
   root.innerHTML = `<div class="mark box top"></div><div class="mark box bottom"></div><div class="mark mid"></div>` +
                    `<div class="mark circle"></div>${zones}${slots}`;
   // 끌지 않고 누르면 그 선수 상세로 (빈 자리는 빼고)
-  const open = (slot) => { if (data.clickable && !slot.querySelector(".empty")) setTriggerValue("clicked", { code: slot.dataset.code, at: Date.now() }); };
+  // 끌지 않고 누르면 — 선수가 있으면 그 선수 상세, 빈 자리면 그 자리의 선수 배치 (앱이 정한다)
+  const open = (slot) => { if (data.clickable) setTriggerValue("clicked", { code: slot.dataset.code, at: Date.now() }); };
   if (data.readonly) { root.querySelectorAll(".slot").forEach((s) => s.addEventListener("click", () => open(s))); return; }
   root.querySelectorAll(".slot.locked").forEach((s) => s.addEventListener("click", () => open(s)));
   const occupied = new Set(data.slots.map((s) => s.code));
@@ -157,8 +160,10 @@ def slot_ovrs(ctx: Ctx, codes: list[str], squad: dict[str, dict | None],
 
 def pitch_slots(codes: list[str], squad: dict[str, dict | None], formation: str | None,
                 grades: dict[str, int | None] | None = None,
-                ovrs: dict[str, tuple[int | None, bool]] | None = None, extras: dict[str, dict] | None = None) -> list[dict]:
+                ovrs: dict[str, tuple[int | None, bool]] | None = None, extras: dict[str, dict] | None = None,
+                empty_hint: str = "비어 있음") -> list[dict]:
     """자리마다 그림 위치 · 카드 HTML. extras[자리] = {player(바꾼 이미지), pay, trait{name, icon}, flag, price} (있는 것만).
+    empty_hint = 빈 자리 밑 글자 (눌러서 넣을 수 있는 경기장은 '+ 눌러서 넣기').
     name · sub('그 자리 OVR · 시즌 +강화', * 는 추정값)은 점검이 읽는다."""
     out = []
     for code in codes:
@@ -171,7 +176,7 @@ def pitch_slots(codes: list[str], squad: dict[str, dict | None], formation: str 
             html = ui_parts.pitch_card(extra.get("player") or p, code, ovr, exact, grade, extra.get("pay"), extra.get("trait"),
                                        extra.get("flag", ""), extra.get("price", ""), nation=extra.get("nation", ""))
         else:
-            html = f'<div class="empty">{escape(code)}</div><div class="ps">비어 있음</div>'
+            html = f'<div class="empty">{escape(code)}</div><div class="ps">{escape(empty_hint)}</div>'
         head = f"{ovr}{'' if exact else '*'} · " if ovr else ""
         out.append({"code": code, "x": x, "y": y, "locked": code == "GK", "html": html, "name": p["name"] if p else "",
                     "sub": f"{head}{p['season_short']}{f' +{grade}' if grade else ''}" if p else ""})

@@ -17,7 +17,7 @@ from services.finder import GROUP_CODES, Filters
 from views.common import (Ctx, back_button, card_ovrs, card_row_list, get_player, name_parts, search_players, tile_grid,
                           with_saves)
 from views.filters import detail_panel
-from views.widgets import season_select, semantic_players
+from views.widgets import pager, season_select, semantic_players, set_page
 
 PAGE = 24
 SAVE_NOTE = (f"골키퍼 선방률은 넥슨 랭커 API 에 없어, 🎮 내 기록 · 내 스쿼드가 불러온 경기(최근 30일)의 상대 유효슈팅 · 실점으로 "
@@ -165,10 +165,4 @@ def render(ctx: Ctx) -> None:
     else:
         st.info("조건에 맞는 카드가 없습니다. 필터를 줄여 보세요.")
 
-    if pages > 1:
-        prev_col, info_col, next_col = st.columns([1, 2, 1])
-        prev_col.button("← 이전", key="pl_prev", disabled=page == 0, width="stretch",
-                        on_click=lambda: st.session_state.update(pl_page=page - 1))
-        info_col.markdown(f"<div style='text-align:center;padding-top:6px'>{page + 1} / {pages}</div>", unsafe_allow_html=True)
-        next_col.button("다음 →", key="pl_next", disabled=page >= pages - 1, width="stretch",
-                        on_click=lambda: st.session_state.update(pl_page=page + 1))
+    pager("pl", page, pages, set_page, ("pl_page",))

@@ -37,6 +37,7 @@ from services.finder import CardFinder
 from services.images import ImageCache
 from services.market import MarketService
 from services.prefetch import Prefetcher
+from services.ranker_refresh import RankerRefresher, with_latest
 from services.stats import StatsCrawler
 from services.teamcolor import TeamColorService
 from vector_store import PlayerStore
@@ -141,6 +142,16 @@ def _background(_settings, _db, _catalog, _wiki, _curated) -> Prefetcher:
     # 앱 시작 때 432장을 미리 받던 것은 뺐다 — 넥슨 테스트 키는 하루 1,000회라 시작할 때마다 약 300회를 쓰면 금방 바닥난다.
     # 미리 분석한 카드의 포지션별 기록은 build_items.py 가 players.json 에 함께 넣는다 (ranker_positions).
     return Prefetcher(_catalog, _wiki, _db, _settings.matchtype, hints)
+
+
+@st.cache_resource
+def _ranker_refresh(_settings, _db, _catalog, _curated) -> RankerRefresher:
+    """랭커 기록 다시 받기 (앱 프로세스에 하나) — refresh_hours 마다 분석해 둔 카드의 대표 포지션 랭커 기록을 새로 받는다."""
+    refresher = RankerRefresher(_catalog, _db, _settings.matchtype, _settings.ranker_refresh_hours,
+                                _settings.ranker_refresh_reserve)
+    curated_ids = {p["player_id"] for p in _curated}
+    refresher.start(lambda: _curated + [p for p in _db.all_players() if p["player_id"] not in curated_ids])
+    return refresher
 
 
 @st.cache_resource
@@ -275,8 +286,11 @@ def boot() -> Ctx:
     ui_parts.use_image_cache(_images(db).resolve)   # 매번 — ui_parts 가 다시 읽혀도(코드 수정) 끼워져 있게
     ui_parts.use_card_frames(_images(db).frame)
     st.session_state._tile_wait = set()   # 이번 화면의 타일 중 카드 상세를 기다리는 카드 (tile_watch)
-    # 미리 분석한 카드 + 앱에서 열어 분석한 카드(SQLite)
-    players = curated + [p for p in db.all_players() if p["player_id"] not in curated_ids]
+    _ranker_refresh(settings, db, catalog, curated)   # 몇 시간마다 랭커 기록을 새로 (뒤에서 — 키가 없으면 돌지 않는다)
+    # 미리 분석한 카드 + 앱에서 열어 분석한 카드(SQLite) — 랭커 기록은 다시 받은 것이 더 새로우면 그것으로
+    latest = db.ranker_latest()
+    players = with_latest(curated, latest) + with_latest([p for p in db.all_players() if p["player_id"] not in curated_ids],
+                                                         latest)
     by_pid = {}
     for p in players:
         if p.get("wiki_title"):

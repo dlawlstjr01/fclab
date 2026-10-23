@@ -55,6 +55,8 @@ class Settings:
     stats_enabled: bool = True
     stats_interval: float = 1.5
     stats_refresh_days: float = 7
+    ranker_refresh_hours: float = 4
+    ranker_refresh_reserve: int = 300
 
     @property
     def items_path(self) -> Path:
@@ -122,6 +124,8 @@ def load_settings(path: str | Path | None = None, **overrides) -> Settings:
         "stats_enabled": bool(raw.get("stats", {}).get("enabled", True)),
         "stats_interval": float(raw.get("stats", {}).get("interval", 1.5)),
         "stats_refresh_days": float(raw.get("stats", {}).get("refresh_days", 7)),
+        "ranker_refresh_hours": float(raw.get("ranker", {}).get("refresh_hours", 4)),
+        "ranker_refresh_reserve": int(raw.get("ranker", {}).get("refresh_reserve", 300)),
     }
     values.update(overrides)
     settings = Settings(**values)

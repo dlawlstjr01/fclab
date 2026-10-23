@@ -942,7 +942,7 @@ def _place_list(ctx: Ctx, ns: str, code: str, cands: list[dict], view: dict, gra
             st.markdown(ui_parts.place_row(p, rank=rank, ovr=ovr, exact=exact, position=code,
                                            grade=grade, pay=pay, total=base_pay + pay if pay is not None else None, cap=PAY_CAP,
                                            nation=flag, crests=crests[1:] if flag else crests, note=c.get("note", ""),
-                                           teamcolor=c.get("tc"), waiting=not info),
+                                           teamcolor=c.get("tc"), waiting=not info, traits=info.get("traits")),
                         unsafe_allow_html=True)
             if st.button(f"{p['name']} · {p['season_short']} 을(를) {code} 자리에", key=f"place_{key}_{c['spid']}",
                          width="stretch"):   # 줄 전체를 덮어야 어디를 눌러도 들어간다 (내용 폭이면 왼쪽만 눌렸다)
@@ -1006,10 +1006,13 @@ def place_dialog(ctx: Ctx, ns: str, code: str, view: dict) -> None:
 # ── 스쿼드 화면 (스쿼드 메이커 · 🎮 내 기록이 같이 쓴다) ─────────────
 
 def _open_slot(ns: str) -> None:
-    """경기장에서 누른 카드의 선수 상세로."""
-    entry = _squad(ns).get(clicked(f"{ns}_pitch") or "")
+    """경기장에서 누른 자리 — 선수가 있으면 그 선수 상세로, 빈 자리면 그 자리의 선수 배치 창 ('➕ 추가'와 같다)."""
+    code = clicked(f"{ns}_pitch") or ""
+    entry = _squad(ns).get(code)
     if entry:
         open_player(str(entry["pid"]))
+    elif code in _squad(ns):
+        _open_place(ns, code)
 
 
 def squad_board(ctx: Ctx, ns: str = "tac", marks: bool = True) -> dict:
@@ -1044,11 +1047,12 @@ def squad_board(ctx: Ctx, ns: str = "tac", marks: bool = True) -> dict:
                          "price": (f"{ui_parts.bp_short(s['price'])} · <b>{share_text(s['share'])}</b>"
                                    if s["price"] else "시세 받는 중" if ctx.market.enabled else "")}
                   for code, s in view["slots"].items()}
-        pitch(f"{ns}_pitch", pitch_slots(codes, players, formation if formation in FORMATIONS else None, grades, ovrs, extras),
+        pitch(f"{ns}_pitch", pitch_slots(codes, players, formation if formation in FORMATIONS else None, grades, ovrs, extras,
+                                         empty_hint="+ 눌러서 넣기"),
               on_move=partial(_on_drop, ns), on_open=partial(_open_slot, ns))
         st.markdown(chips_html(view, formation), unsafe_allow_html=True)
         st.caption("카드의 숫자는 그 자리에서의 OVR(강화 · 적응도 5 · 팀컬러 포함)입니다 — 스쿼드에 등록한 선수는 적응도 5"
-                   "(모든 능력치 +4)로 게임과 같습니다. 카드를 누르면 선수 상세로 갑니다."
+                   "(모든 능력치 +4)로 게임과 같습니다. 카드를 누르면 선수 상세로, 빈 자리를 누르면 그 자리에 선수를 넣습니다."
                    + (" * 는 카드 상세를 받기 전의 추정값입니다." if marks else ""))
     with list_col:
         st.markdown(f"**자리별 선수** — {escape(formation)} · 공격수부터 · 줄을 누르면 선수 상세 · '➕ 추가' · '✏️ 편집'으로 "

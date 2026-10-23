@@ -22,6 +22,7 @@ from services.teamcolor import effect_bonus, enhance_details
 from views.common import (Ctx, card_basics, crests_of, daily_wait, friendly_error, get_player, open_player, tile_grid,
                           with_saves)
 from views.players import SAVE_NOTE
+from views.widgets import pager, set_page
 
 APPLIED = "OVR (강화 · 팀컬러 적용)"   # 랭커 분석의 정렬 — 상세 조건의 강화 등급 · 강화 팀컬러 · 팀컬러를 더한 OVR
 COND_KEYS = ("nation", "club", "tc", "enh", "traits", "foot")
@@ -371,10 +372,4 @@ def _ranker_board(ctx: Ctx) -> None:
                       "position": card.get("position") or next(iter(p.get("positions") or []), None),
                       "stats": f"랭커 {p['ranker']['match_count']}경기 · {stats}"})
     rank_rows(ctx, items, "rank_open")
-    if pages > 1:
-        prev_col, info_col, next_col = st.columns([1, 2, 1])
-        prev_col.button("← 이전", key="rank_prev", disabled=page == 0, width="stretch",
-                        on_click=lambda: st.session_state.update(rank_page=page - 1))
-        info_col.markdown(f"<div style='text-align:center;padding-top:6px'>{page + 1} / {pages}</div>", unsafe_allow_html=True)
-        next_col.button("다음 →", key="rank_next", disabled=page >= pages - 1, width="stretch",
-                        on_click=lambda: st.session_state.update(rank_page=page + 1))
+    pager("rank", page, pages, set_page, ("rank_page",))

@@ -11,6 +11,39 @@ from data_prep.nexon_api import split_spid
 from data_prep.players import season_short
 from views.common import Ctx, by_ovr, card_ovrs, get_player, name_parts
 
+# ── 쪽 번호 넘기기 ──────────────────────────────────────────────
+
+PAGER_BLOCK = 10   # 쪽 번호 버튼을 한 번에 이만큼 — 쪽이 이만큼 이상이면 ‹ ›(한 쪽씩) · «  »(10쪽씩)도
+
+
+def set_page(state_key: str, page: int) -> None:
+    """쪽 번호를 세션에 둔다 (pager 의 on_select 로)."""
+    st.session_state[state_key] = page
+
+
+def pager(key: str, page: int, pages: int, on_select, args: tuple = ()) -> None:
+    """쪽 번호 버튼 1 2 3 … (지금 쪽은 강조, 10개씩) — 쪽이 10개 이상이면 ‹ › 로 한 쪽씩, « » 로 10쪽씩 넘긴다.
+    page 는 0부터. 누르면 on_select(*args, 새 쪽). 쪽이 하나면 그리지 않는다."""
+    if pages <= 1:
+        return
+    start = page // PAGER_BLOCK * PAGER_BLOCK
+    arrows = pages >= PAGER_BLOCK
+    with st.container(key=f"pager_{key}", horizontal=True, horizontal_alignment="center", gap="small"):
+        if arrows:
+            st.button("«", key=f"{key}_pg_back10", on_click=on_select, args=(*args, max(0, page - PAGER_BLOCK)),
+                      disabled=page == 0, help=f"{PAGER_BLOCK}쪽 앞으로")
+            st.button("‹", key=f"{key}_pg_back", on_click=on_select, args=(*args, page - 1), disabled=page == 0,
+                      help="앞 쪽")
+        for n in range(start, min(start + PAGER_BLOCK, pages)):
+            st.button(str(n + 1), key=f"{key}_pg_{n}", on_click=on_select, args=(*args, n),
+                      type="primary" if n == page else "secondary")
+        if arrows:
+            st.button("›", key=f"{key}_pg_next", on_click=on_select, args=(*args, page + 1), disabled=page >= pages - 1,
+                      help="다음 쪽")
+            st.button("»", key=f"{key}_pg_next10", on_click=on_select, args=(*args, min(pages - 1, page + PAGER_BLOCK)),
+                      disabled=page >= pages - 1, help=f"{PAGER_BLOCK}쪽 뒤로")
+
+
 # ── 강화 등급 고르기 ─────────────────────────────────────────────
 
 def grade_buttons(label: str, key: str, options=range(1, 14), on_change=None, args: tuple = ()) -> int:
