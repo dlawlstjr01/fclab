@@ -147,7 +147,10 @@ def render(ctx: Ctx) -> None:
     st.markdown('<div class="fc-section">⚒️ 강화 시뮬레이터<small>공식 확률표 그대로 — 한 번씩 강화해 보고, 목표 등급까지 '
                 '몇 번이 드는지 계산합니다 · 부스트는 데이터센터 강화 부스트 도우미로 계산</small></div>', unsafe_allow_html=True)
     st.markdown("<style>.fc-grow-table{width:100%;border-collapse:collapse;font-size:13px}.fc-grow-table th,.fc-grow-table td"
-                "{padding:6px 8px;border-bottom:1px solid rgba(127,127,127,.25);text-align:left;white-space:nowrap}</style>",
+                "{padding:6px 8px;border-bottom:1px solid rgba(127,127,127,.25);text-align:left;white-space:nowrap}"
+                # 휴대폰 — 긴 '실패 시 복구' 칸은 줄을 바꿔 옆으로 밀지 않고 다 보이게
+                "@media (max-width:640px){.fc-grow-table th:last-child,.fc-grow-table td:last-child{white-space:normal;"
+                "min-width:110px}.fc-grow-table{font-size:12px}}</style>",
                 unsafe_allow_html=True)
     set_col, out_col = st.columns([1, 1.25], gap="large")
     with set_col:
@@ -159,7 +162,7 @@ def render(ctx: Ctx) -> None:
             b1, b2 = st.columns(2)
             b1.button("⚒️ 한 번 강화", key="gr_try_empty", type="primary", width="stretch", disabled=True)
             b2.button("🎯 목표까지 강화", key="gr_goal_empty", type="primary", width="stretch", disabled=True)
-            st.caption("왼쪽에서 강화할 선수를 고르면 이 카드에 그 선수가 들어갑니다. 아래 표는 공식 강화 확률입니다.")
+            st.caption("강화할 선수를 고르면 이 카드에 그 선수가 들어갑니다. 아래 표는 공식 강화 확률입니다.")
         with st.expander("📋 공식 강화 확률표 (26.4 기준)", expanded=True):
             st.markdown(_table_html(), unsafe_allow_html=True)
         return

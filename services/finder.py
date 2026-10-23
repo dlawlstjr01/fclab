@@ -256,6 +256,34 @@ def card_ok(f: Filters, spid: int, card: dict | None) -> bool:
                 not f.foot or FOOT.get(f.foot) == {"R": 1, "L": 2}.get(side), not f.weak_foot or weak == f.weak_foot))
 
 
+# 그해 현역이던 선수만 받는 시즌 (24 LIVE · 25 TOTS · 25 PL · 25 UCL · 26KLeague · 23NG …)
+ACTIVE_SEASON = re.compile(r"^(\d{2}) ?(LIVE|TOTS|TOTY|PL|PLA|PLS|UCL|KLeague|KB|NG)\b")
+ACTIVE_YEARS = 2   # 가장 최근 현역 시즌의 해부터 이만큼 (26 이면 25 · 26)
+
+
+def active_years(catalog, pid: int) -> list[int]:
+    """그 선수가 현역으로 받은 시즌의 해 (24 LIVE → 2024) — 레전드 · 스페셜 시즌은 세지 않는다."""
+    years = []
+    for spid in catalog.cards_of(pid):
+        m = ACTIVE_SEASON.match(catalog.season_name(spid))
+        if m:
+            years.append(2000 + int(m.group(1)))
+    return years
+
+
+def active_pids(catalog) -> set[int]:
+    """현역 선수(pid) — 가장 최근 현역 시즌(LIVE · TOTS · PL …)의 해부터 ACTIVE_YEARS 해 안의 현역 카드가 있는 선수.
+    아이콘이 아니어도 은퇴한 선수(아구에로 — 22 LIVE 가 마지막)는 현역이 아니다."""
+    season_year = {}
+    for sid, season in catalog.seasons.items():
+        m = ACTIVE_SEASON.match(season.get("className", ""))
+        if m:
+            season_year[sid] = 2000 + int(m.group(1))
+    latest = max(season_year.values(), default=0)
+    recent = {sid for sid, year in season_year.items() if year > latest - ACTIVE_YEARS}
+    return {pid for pid, spids in catalog.by_pid.items() if any(split_spid(s)[0] in recent for s in spids)}
+
+
 def legend_pids(catalog) -> set[int]:
     """아이콘 카드가 있는 선수(pid) — 그 선수의 모든 카드를 레전드로 본다."""
     icons = {sid for sid, s in catalog.seasons.items() if "ICON" in s["className"].upper() or "TKI" in s["className"].upper()}
@@ -423,6 +451,12 @@ class CardFinder:
             self._legends = legend_pids(self.catalog)
         return self._legends
 
+    def actives(self) -> set[int]:
+        """현역 선수(pid) — 최근 두 해의 현역 시즌 카드가 있는 선수 (active_pids)."""
+        if getattr(self, "_actives", None) is None:
+            self._actives = active_pids(self.catalog)
+        return self._actives
+
     def season_names(self) -> dict[int, str]:
         """시즌 번호 → 짧은 이름 ('26 TOTS' · 'ICON TM' …) — 말에서 시즌을 찾고 화면에 보일 때."""
         return {sid: s["className"].split(" (")[0].strip() for sid, s in self.catalog.seasons.items()}
@@ -503,9 +537,9 @@ class CardFinder:
             for tc in f.teamcolor_also:
                 keep = set(self._merged(replace(f, teamcolor=tc, teamcolor_any=(), teamcolor_also=())))
                 rows = [r for r in rows if r["spid"] in keep]
-        if f.legend is not None:
-            legends = self.legends()
-            rows = [r for r in rows if (split_spid(r["spid"])[1] in legends) == f.legend]
+        if f.legend is not None:   # 레전드 = 아이콘 카드가 있는 선수, 현역 = 최근 두 해의 현역 시즌 카드가 있는 선수
+            keep = self.legends() if f.legend else self.actives()
+            rows = [r for r in rows if split_spid(r["spid"])[1] in keep]
         if f.ability:
             stats = self.db.card_stats([r["spid"] for r in rows])
             rows = sorted(rows, key=lambda r: (-(stats.get(r["spid"], {}).get("stats", {}).get(f.ability) or 0),

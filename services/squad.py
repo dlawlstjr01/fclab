@@ -9,6 +9,7 @@
 2) 고르기 (코드 — 예산 셈을 LLM 에 맡기지 않는다): 예산 · 급여 한도 · 강화 범위 · 같은 선수는 한 번만.
    가장 싼 조합에서 시작해, 예산이 남는 동안 '오르는 점수 ÷ 더 드는 BP'가 가장 큰 바꿈을 하나씩 고른다.
    OVR 은 그 자리(포지션)에서의 OVR + 강화 — 카드의 포지션별 OVR 에 그 포지션이 없으면 대표 OVR 에서 5를 빼고 본다.
+   고른 11명의 자리 OVR(결과 · 설명 근거)에는 적응도 5(+4)도 넣는다 — 스쿼드에 등록한 선수는 적응도 5.
    점수 = 공식 · 친선: 랭커 이용 비율 55% + OVR 45% / 감독 모드: 이용 비율 35% + OVR 65%
    (공식 · 친선은 직접 조작해 랭커가 많이 쓰는 '체감' 좋은 카드가, 감독 모드는 AI 가 뛰어 능력치가 더 중요하다)
 3) 설명 (LLM): 고른 11명이 모드 · 전술 · 팀컬러에 왜 맞는지와 운영 팁 — 근거 번호와 함께.
@@ -23,7 +24,7 @@ from data_prep.enhance import GRADE_OVR
 from data_prep.market import bp
 from data_prep.players import GROUP_OF
 from data_prep.prompts import squad_messages
-from data_prep.tactics import FORMATIONS, ovr_at
+from data_prep.tactics import FORMATIONS, SQUAD_ADAPT, ovr_at
 from llm import reply_text
 
 MODE_NAMES = {"official": "공식 · 친선 경기", "manager": "감독 모드"}
@@ -41,10 +42,11 @@ def _pid(card: dict) -> int:
     return card["spid"] % 1_000_000
 
 
-def slot_ovr(card: dict, code: str, grade: int) -> tuple[int, bool]:
-    """그 자리에서의 OVR (강화 포함)과 정확한 값인지 — 선수 검색 카드는 포지션별 OVR, 데일리 차트 카드는 그 포지션의 OVR."""
+def slot_ovr(card: dict, code: str, grade: int, adapt: int = 1) -> tuple[int, bool]:
+    """그 자리에서의 OVR (강화 · 적응도 포함)과 정확한 값인지 — 선수 검색 카드는 포지션별 OVR, 데일리 차트 카드는 그 포지션의 OVR.
+    점수(후보끼리 비교)는 적응도 1 로, 고른 11명의 자리 OVR(결과 · 설명 근거)은 스쿼드처럼 적응도 5 로 본다."""
     listed = card.get("positions") or ([(card["usage_position"], card.get("ovr"))] if card.get("usage_position") else [])
-    value, exact = ovr_at(code, grade, card.get("position_ovr"), listed, card.get("ovr") or 100)
+    value, exact = ovr_at(code, grade, card.get("position_ovr"), listed, card.get("ovr") or 100, adapt=adapt)
     return value, exact
 
 
@@ -239,7 +241,7 @@ class SquadAdvisor:
             notes.append(f"총 급여 {pay}가 한도 {pay_cap}을 넘습니다")
         picks = {}
         for code, o in chosen.items():
-            ovr, exact = slot_ovr(o[0], code, o[1])
+            ovr, exact = slot_ovr(o[0], code, o[1], SQUAD_ADAPT)
             picks[code] = {"card": o[0], "grade": o[1], "price": o[2], "score": o[3], "ovr": ovr, "exact": exact,
                            "team": in_team(o)}
         team = None
@@ -276,12 +278,13 @@ def squad_evidence(result: dict) -> list[dict]:
         card, grade = pick["card"], pick["grade"]
         share = (f"{MODE_NAMES[result['mode']]} 랭커 {USAGE_GROUP[code]} 이용 {card.get('share') or 0:.1f}% ({card.get('users') or 0}명)"
                  if card.get("share") else "랭커 이용 상위 16장 밖")
-        ovr = pick.get("ovr") or (card.get("ovr") or 0) + GRADE_OVR[grade]
+        ovr = pick.get("ovr") or (card.get("ovr") or 0) + GRADE_OVR[grade] + SQUAD_ADAPT - 1
         team = f" · 팀컬러 '{reached['name']}'에 듦" if reached and pick.get("team") else ""
         evidence.append({
             "number": len(evidence) + 1, "source_type": "datacenter", "source_label": "FC 온라인 데이터센터",
             "title": f"{code} 자리 — {card['name']} {card.get('season_code', '')} +{grade}", "url": SOURCE,
-            "text": (f"{code} 자리 OVR {ovr}{'' if pick.get('exact', True) else ' (추정)'} (+1 대표 OVR {card.get('ovr') or '-'}) · "
+            "text": (f"{code} 자리 OVR {ovr}{'' if pick.get('exact', True) else ' (추정)'} (강화 · 적응도 5 포함, "
+                     f"+1 대표 OVR {card.get('ovr') or '-'}) · "
                      f"시세 {bp(pick['price'])} · 급여 {card.get('pay') or '-'} · {share} · 후보: {card.get('source', '')}{team}"),
         })
     return evidence

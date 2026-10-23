@@ -194,8 +194,9 @@ def bonus_controls(ctx: Ctx, player: dict, info: dict, compact: bool = False) ->
         a_col, e_col = st.columns([1, 3], vertical_alignment="bottom")
         t_col, l_col = st.columns([3, 1], vertical_alignment="bottom")
         r_col, x_col = st.columns([3, 1], vertical_alignment="bottom")
-    else:
-        a_col, e_col, t_col, l_col, r_col, x_col = st.columns([0.8, 2.1, 2.1, 0.9, 2.1, 1], vertical_alignment="bottom")
+    else:   # 1000px 이하는 세 칸씩 두 줄 (ui_parts.css 의 .st-key-pcbonus — 한 줄이면 '↺ 초기화'가 두 줄로 갈라졌다)
+        a_col, e_col, t_col, l_col, r_col, x_col = st.container(key="pcbonus").columns(
+            [0.8, 2.1, 2.1, 0.9, 2.1, 1], vertical_alignment="bottom")
     adapt_key = f"pc_adapt_{spid}"
     if st.session_state.get(adapt_key) not in (None, *ADAPT_LEVELS):   # 예전에 고른 2 · 3 · 4 (지금은 없는 단계)
         st.session_state[adapt_key] = ADAPT_LEVELS[-1] if st.session_state[adapt_key] > 1 else ADAPT_LEVELS[0]

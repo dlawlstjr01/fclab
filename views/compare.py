@@ -80,11 +80,12 @@ def render(ctx: Ctx) -> None:
 
     # A · B 를 좌우로 나란히 (가운데에 바꾸기) — 세로로 쌓으면 두 선수를 한눈에 못 본다
     # 위쪽 맞춤 — 가운데 맞춤이면 한쪽에 카드 목록이 열릴 때 다른 쪽 입력란이 아래로 밀려 내려갔다
-    a_col, s_col, b_col = st.columns([1, 0.09, 1], gap="small", vertical_alignment="top")
+    # 넓은 화면은 한 줄(⇄ 칸은 52px), 900px 이하에서는 A → ⇅ → B 로 위아래 (ui_parts.css 의 .st-key-cmpsel)
+    a_col, s_col, b_col = st.container(key="cmpsel").columns([1, 0.09, 1], gap="small", vertical_alignment="top")
     with a_col, st.container(border=True):
         st.markdown("**🔵 선수 A**")
         a = card_picker(ctx, key="cmp_a_pick", default_id=st.session_state.cmp_a)
-    s_col.markdown('<div style="height:88px"></div>', unsafe_allow_html=True)   # ⇄ 를 이름 입력란 높이에
+    s_col.markdown('<div class="fc-swapgap"></div>', unsafe_allow_html=True)   # ⇄ 를 이름 입력란 높이에
     s_col.button("⇄", key="cmp_swap", on_click=_swap, width="stretch", help="A · B 바꾸기")
     with b_col, st.container(border=True):
         st.markdown("**🟠 선수 B**")

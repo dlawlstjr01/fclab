@@ -79,7 +79,8 @@ def render(ctx: Ctx) -> None:
                                 help="쉼표로 여러 선수를 한 번에 — 예) 손흥민, 케인, 음바페")
         with s_col:
             season = season_select(ctx, key="pl_season")
-        kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="pl_kind", on_change=_reset_page)
+        kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="pl_kind", on_change=_reset_page,
+                               help="레전드 = 아이콘 카드가 있는 선수의 모든 시즌 카드 · 현역 = 최근 두 해의 현역 시즌(LIVE · TOTS · PL …) 카드가 있는 선수")
         sort = o_col.selectbox("정렬", list(sorts), key="pl_sort", on_change=_reset_page)
     st.session_state.setdefault("pl_group", "전체")   # 기본값은 세션으로 — 뒤로 돌아올 때 되살린 값과 겹치지 않게
     group = st.pills("포지션", ["전체"] + list(POSITION_GROUPS), key="pl_group", on_change=_reset_page)
@@ -119,7 +120,8 @@ def render(ctx: Ctx) -> None:
         pool = [p for p in ctx.players if (not plain or any(n in p["name"].replace(" ", "") for n in plain))
                 and (season is None or p["season_id"] in season)
                 and (group is None or p.get("position_group") == group)
-                and (kind in (None, "전체") or (kind == "레전드") == (p["pid"] in ctx.finder.legends()))]
+                and (kind in (None, "전체")   # 레전드 = 아이콘 카드가 있는 선수, 현역 = 최근 두 해의 현역 시즌 카드가 있는 선수
+                     or p["pid"] in (ctx.finder.legends() if kind == "레전드" else ctx.finder.actives()))]
         pool = with_saves(ctx, pool)
         if sort_key == "name":
             pool.sort(key=lambda p: (p["name"], -p["season_id"]))

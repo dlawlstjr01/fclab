@@ -174,9 +174,12 @@ button[data-testid="stBaseButton-tertiary"]:hover {{ background: rgba(127,127,12
 .st-key-navbar button {{ padding-left: .45rem; padding-right: .45rem; min-width: 0; max-width: 100%; overflow: hidden; }}
 .st-key-navbar button p {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 @media (max-width: 1180px) {{ .st-key-navbar button p {{ font-size: 13px; }} }}
-@media (max-width: 900px) {{
+@media (max-width: 900px) {{   /* 줄마다 5칸(로고 + 메뉴 4 / 메뉴 4) — 마지막 줄 버튼이 혼자 한 줄을 다 차지하지 않게 */
   .st-key-navbar [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .35rem; }}
-  .st-key-navbar [data-testid="stColumn"] {{ width: auto !important; min-width: 92px; flex: 1 1 92px !important; }}
+  .st-key-navbar [data-testid="stColumn"] {{ width: auto !important; min-width: 0; flex: 0 0 calc(20% - .3rem) !important; }}
+}}
+@media (max-width: 600px) {{   /* 휴대폰 — 줄마다 3칸 (3 · 3 · 3) */
+  .st-key-navbar [data-testid="stColumn"] {{ flex: 0 0 calc(33.333% - .25rem) !important; }}
 }}
 
 /* 반응형 — 화면이 좁아지면 줄바꿈 (st-key-wrap_* : 필터 줄, st-key-grid_* : 카드 묶음) */
@@ -195,6 +198,9 @@ div[class*="st-key-grid_"] [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap;
 div[class*="st-key-grid_"] [data-testid="stColumn"] {{ min-width: 150px; flex: 1 1 150px; }}
 @media (max-width: 1100px) {{
   .fc-hero h1 {{ font-size: 32px; }}
+}}
+@media (max-width: 480px) {{
+  .fc-hero h1 {{ font-size: 22px; }}
 }}
 @media (max-width: 768px) {{
   .block-container {{ padding-left: .9rem; padding-right: .9rem; }}
@@ -239,7 +245,7 @@ div[class*="st-key-slide_prev_"] {{ animation: fc-from-left .38s ease-out; }}
   background: radial-gradient(90% 140% at 0% 0%, rgba(22,224,138,.22) 0%, rgba(22,224,138,0) 55%),
               radial-gradient(80% 120% at 100% 0%, rgba(57,135,229,.30) 0%, rgba(57,135,229,0) 60%), #101830;
   border: 1px solid rgba(255,255,255,.06); }}
-.fc-hero h1 {{ font-size: 40px; margin: 0 0 6px; color: #fff; }}
+.fc-hero h1 {{ font-size: 40px; margin: 0 0 6px; color: #fff; word-break: keep-all; }}
 .fc-hero h1 b {{ color: {ACCENT}; }}
 .fc-hero p {{ margin: 0; color: #c3cbe0; font-size: 15px; }}
 .fc-hero .stats {{ display: flex; gap: 26px; margin-top: 16px; flex-wrap: wrap; }}
@@ -328,12 +334,14 @@ div[class*="st-key-tile_ssn_"] .stMarkdown div {{ margin-bottom: 0 !important; }
 .fc-prow .ovr small {{ display: block; font-size: 10.5px; font-weight: 700; color: {t['muted']}; text-align: right; }}
 .fc-prow .wait {{ font-size: 11.5px; color: {t['muted']}; }}
 /* 파워 랭킹 순위 줄 — 선수 목록 줄 앞에 순위, 밑에 그 카드의 랭커 기록 (기준 기록은 굵게) */
+.fc-prow.oncard {{ grid-template-columns: 96px minmax(0, 1fr) auto; }}   /* 카드 그림 위 OVR · 포지션 (선수 찾기 목록) */
 .fc-prow.ranked {{ grid-template-columns: 28px 96px minmax(0, 1fr) auto; }}   /* 카드 그림 위 OVR · 포지션이 TOP 3 타일만큼 보이게 (74px 면 포지션 글자가 8px) */
 .fc-prow .rk {{ text-align: center; font-size: 17px; font-weight: 900; color: {ACCENT}; font-variant-numeric: tabular-nums; }}
 .fc-prow .st {{ font-size: 12.5px; color: {t['ink2']}; margin-top: 6px; padding-top: 6px; border-top: 1px dashed {t['grid']};
   font-variant-numeric: tabular-nums; }}
 .fc-prow .st b {{ color: {t['ink']}; }}
 @media (max-width: 760px) {{ .fc-prow {{ grid-template-columns: 58px minmax(0, 1fr); }}
+  .fc-prow.oncard {{ grid-template-columns: 72px minmax(0, 1fr); }}
   .fc-prow.ranked {{ grid-template-columns: 22px 72px minmax(0, 1fr); }}
   .fc-prow .side {{ grid-column: 1 / -1; justify-content: space-between; }} }}
 /* 좁은 칸용 (스쿼드 메이커 자리별 선수) — 오른쪽은 OVR 만, 특성은 아래 줄. 이름 한 줄 · 나머지는 덩어리째 줄바꿈 */
@@ -580,6 +588,39 @@ div.st-key-gr_actions button p, div[class*="st-key-again_"] button p {{ white-sp
 .fc-sum b .star-up {{ display: inline; font-size: inherit; color: {ACCENT}; }}   /* 강화로 더해진 개인기 별 — 초록 = 오른 만큼 */
 .fc-sum small {{ font-size: 11px; color: {t['ink2']}; }}
 /* AI 로 찾기의 세 단계 (나무위키 · AI 명단 · FC 온라인 DB) */
+/* 스쿼드 — 1100px 이하는 경기장 · 자리별 선수를 위아래로 (옆에 두면 자리별 선수 칸이 좁아 '➕ 추가' · '✕ 빼기'가 세로로 갈라졌다).
+   맨 위 칸 나눔만 — 안에 칸 나눔(자리별 선수 줄)이 든 것 */
+@media (max-width: 1100px) {{
+  .st-key-sqboard [data-testid="stHorizontalBlock"]:has([data-testid="stColumn"] [data-testid="stHorizontalBlock"]) {{
+    flex-wrap: wrap; }}
+  .st-key-sqboard [data-testid="stHorizontalBlock"]:has([data-testid="stColumn"] [data-testid="stHorizontalBlock"]) > [data-testid="stColumn"] {{
+    flex: 1 1 100% !important; width: 100% !important; }}
+}}
+.st-key-sqboard button p, div[class*="st-key-wrap_me"] button p, .st-key-pcbonus button p {{ white-space: nowrap; }}
+/* 선수 상세 카드 정보의 적응도 · 팀컬러 · 초기화 줄 — 1000px 이하는 세 칸씩 */
+@media (max-width: 1000px) {{
+  .st-key-pcbonus [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .5rem; }}
+  .st-key-pcbonus [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{ flex: 1 1 calc(33% - 1rem) !important;
+    min-width: 140px; }}
+}}
+/* 비교의 A · ⇄ · B — 넓은 화면은 한 줄(⇄ 칸은 52px), 900px 이하는 A → ⇅ → B 로 위아래 (가운데 칸이 비율이면 좁을 때 찌그러졌다) */
+.st-key-cmpsel [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap; }}
+.st-key-cmpsel [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {{
+  flex: 0 0 52px !important; width: 52px !important; min-width: 52px; }}
+.fc-swapgap {{ height: 88px; }}
+@media (max-width: 900px) {{
+  .st-key-cmpsel [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .4rem; }}
+  .st-key-cmpsel [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+  .st-key-cmpsel [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {{
+    flex: 1 1 100% !important; width: 100% !important; min-width: 0; }}
+  .fc-swapgap {{ display: none; }}
+  .st-key-cmp_swap .stButton {{ display: flex; justify-content: center; }}
+  .st-key-cmp_swap button {{ max-width: 76px; }}
+  .st-key-cmp_swap button p {{ transform: rotate(90deg); }}
+}}
+/* 파워 랭킹 데일리의 '모드' 고르기 — 버튼 두 개를 한 줄에 */
+.st-key-wrap_dailyfilters [data-testid="stButtonGroup"] {{ flex-wrap: nowrap; }}
+.st-key-wrap_dailyfilters [data-testid="stButtonGroup"] button p {{ white-space: nowrap; }}
 .fc-steps > div {{ flex: 1 1 230px; }}
 .fc-steps span {{ font-size: 12px; font-weight: 800; color: {t['ink']}; margin-bottom: 3px; }}
 .fc-steps small {{ font-size: 12.5px; line-height: 1.55; }}
@@ -997,7 +1038,7 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
              crests: list[tuple[str, str]] = (), exact: bool = True, note: str = "", ovr_label: str = "",
              wait_text: str = "국적 · 팀컬러 불러오는 중…", compact: bool = False,
              tc_summary: dict[str, int] | None = None, rank: int | None = None, extra: str = "",
-             on_card: bool = False) -> str:
+             on_card: bool = False, adapt: int = 1) -> str:
     """선수 줄 (공식 스쿼드 메이커의 선수 목록처럼) — 카드 그림 · 포지션 · 시즌 · 이름 · 급여 · 강화 / 시즌 이름 · 주발 /
     국적 · 팀컬러 / 요약 능력치(강화 반영) / 특성 · OVR. info(카드 상세)가 아직 없으면 그 칸은 '불러오는 중'.
 
@@ -1005,7 +1046,7 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
     가운데 글자 칸이 넓어진다. 이름은 한 줄(넘치면 …), 시즌 · 급여 · 강화 · 주발은 덩어리째 줄을 바꾼다.
     tc_summary = 팀컬러로 더 오른 요약 능력치 {스피드: +N} (스쿼드 메이커) — 더해서 초록으로 보인다.
     rank = 맨 앞 순위 번호, extra = 맨 밑 한 줄 HTML (파워 랭킹 — 그 카드의 랭커 기록). on_card = 카드 그림 위에도 OVR(강화 반영) ·
-    포지션 (TOP 3 타일처럼)."""
+    포지션 (TOP 3 타일처럼). adapt = 적응도 — 요약 능력치 숫자에 단계마다 +1 (스쿼드는 5 → +4, 선수 상세처럼 숫자에 바로)."""
     info = info or {}
     grade = grade or 1
     position = position or info.get("position") or ""
@@ -1019,7 +1060,7 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
                     for name, url in crests if image(url))
     l3 = icons or (f'<span class="wait">{escape(wait_text)}</span>' if not info and wait_text else "")
     summary = info.get("summary") or {}
-    bonus = GRADE_OVR[grade]
+    bonus = GRADE_OVR[grade] + max(0, adapt - 1)
     # 능력치 하나('속력 120')는 한 덩어리 — 줄을 바꿔도 이름과 숫자가 갈라지지 않게
     up = tc_summary or {}
     l4 = "".join(f'<span>{k} <b class="up" title="팀컬러 +{up[k]}">{v + bonus + up[k]}</b></span>' if up.get(k)
@@ -1047,7 +1088,8 @@ def card_row(player: dict, info: dict | None = None, *, grade: int | None = None
     rank_html = f'<div class="rk">{rank}</div>' if rank is not None else ""
     extra_html = f'<div class="st">{extra}</div>' if extra else ""
     visual = card_visual(player, ovr, position) if on_card else card_visual(player)
-    return (f'<div class="fc-prow{" ranked" if rank is not None else ""}">{rank_html}<div>{visual}</div><div>'
+    kind = (" ranked" if rank is not None else "") + (" oncard" if on_card else "")
+    return (f'<div class="fc-prow{kind}">{rank_html}<div>{visual}</div><div>'
             f'<div class="l1">{l1}</div><div class="l2">{l2}</div><div class="l3">{l3}</div>'
             + (f'<div class="l4">{l4}</div>' if l4 else "") + note_html + extra_html
             + f'</div><div class="side"><div class="traits">{trait_html}</div><div class="ovr">{shown}{label}</div></div></div>')

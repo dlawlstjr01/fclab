@@ -745,7 +745,8 @@ def crests_of(ctx: Ctx, info: dict | None) -> list[tuple[str, str]]:
 
 def card_row_list(ctx: Ctx, players: list[dict], key: str, notes: dict[str, str] | None = None, grade: int = 1) -> int:
     """선수 줄 목록 (공식 스쿼드 메이커의 선수 목록처럼) — 줄 전체가 버튼(상세 페이지). 카드 상세가 없는 카드는 받기 시작하고
-    아직 받는 중인 장수를 돌려준다 (부르는 쪽이 조각을 다시 그린다). grade 를 주면 그 강화의 OVR · 능력치로."""
+    아직 받는 중인 장수를 돌려준다 (부르는 쪽이 조각을 다시 그린다). grade 를 주면 그 강화의 OVR · 능력치로.
+    카드 그림 위에도 OVR(강화 반영) · 포지션 — 파워 랭킹 줄처럼."""
     spids = [p["spid"] for p in players]
     ctx.cards.want(spids)
     infos = ctx.cards.get(spids)
@@ -759,7 +760,7 @@ def card_row_list(ctx: Ctx, players: list[dict], key: str, notes: dict[str, str]
             st.markdown(ui_parts.card_row(p, info, grade=grade, ovr=ovr + GRADE_OVR[grade] if ovr else ovr, position=position,
                                           pay=(info or {}).get("pay", known.get("pay")),
                                           foot=(info or {}).get("foot_lr") or known.get("foot"), crests=crests_of(ctx, info),
-                                          note=(notes or {}).get(p["player_id"], "")), unsafe_allow_html=True)
+                                          note=(notes or {}).get(p["player_id"], ""), on_card=True), unsafe_allow_html=True)
             if st.button(f"{p['name']} · {p['season_short']} 보기", key=f"{key}_{p['player_id']}", width="stretch"):
                 open_player(p["player_id"])   # 조각(fragment) 안에서도 화면이 바뀌게 — 콜백 대신 눌린 뒤 앱 전체를 다시
                 st.rerun()

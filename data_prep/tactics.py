@@ -117,15 +117,21 @@ BASE_POSITION = {"ST": "ST", "LS": "ST", "RS": "ST", "CF": "CF", "LF": "CF", "RF
                  "LDM": "CDM", "RDM": "CDM", "LM": "LM", "RM": "RM", "CB": "CB", "LCB": "CB", "RCB": "CB", "SW": "SW",
                  "LB": "LB", "RB": "RB", "LWB": "LWB", "RWB": "RWB", "GK": "GK"}
 OVR_GRID = ("ST", "LW", "CF", "RW", "CAM", "LM", "CM", "RM", "CDM", "LWB", "CB", "RWB", "LB", "SW", "RB", "GK")   # 화면 순서
+# 스쿼드에 등록한 선수의 적응도 — 2025 겨울 업데이트부터 경기를 뛰지 않아도 등록만 하면 5 (등록에서 빼면 1).
+# 데이터센터 선수 정보의 적응도도 1 · 5 두 단계뿐이고, 5 는 모든 능력치 +4 → 자리 OVR 도 +4.
+# 스쿼드(내 기록 · 스쿼드 메이커 · AI 추천 스쿼드 · 선수 배치)는 5, 카드 한 장을 보는 화면(선수 상세 · 비교)은 고른 값(처음 1).
+SQUAD_ADAPT = 5
 
 
-def ovr_at(code: str, grade: int | None, grid: dict | None = None, listed=None, main: int | None = None) -> tuple[int | None, bool]:
-    """그 자리에서 뛸 때의 OVR (강화 포함)과 정확한 값인지.
+def ovr_at(code: str, grade: int | None, grid: dict | None = None, listed=None, main: int | None = None,
+           adapt: int = 1) -> tuple[int | None, bool]:
+    """그 자리에서 뛸 때의 OVR (강화 · 적응도 포함)과 정확한 값인지.
 
-    grid: 선수 정보의 포지션별 OVR 16칸 (+1 기준) · listed: 선수 검색의 [(포지션, OVR)] (주 · 부 포지션만) ·
+    grid: 선수 정보의 포지션별 OVR 16칸 (+1 · 적응도 1 기준) · listed: 선수 검색의 [(포지션, OVR)] (주 · 부 포지션만) ·
     main: 대표 OVR — 앞의 둘에 그 포지션이 없을 때 대신 쓰고, 정확하지 않다고 알린다.
+    adapt: 적응도 — 단계마다 모든 능력치 +1 (스쿼드는 SQUAD_ADAPT = 5 → +4).
     """
-    bonus = GRADE_OVR[grade or 1]
+    bonus = GRADE_OVR[grade or 1] + max(0, adapt - 1)
     base = BASE_POSITION.get(code, code)
     if grid and base in grid:
         return grid[base] + bonus, True

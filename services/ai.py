@@ -91,7 +91,7 @@ def tactic_evidence(squad: list[tuple[str, dict]], facts: dict | None = None) ->
         evidence.append({
             "number": 2, "source_type": "datacenter", "source_label": "FC 온라인 데이터센터 (포지션별 오버롤 · 급여 · 팀컬러)",
             "title": "스쿼드 요약", "url": "",
-            "text": (f"평균 OVR {avg} (자리마다 그 포지션에서의 OVR + 강화) · 총 급여 {facts['pay']}/{facts['pay_cap']}\n"
+            "text": (f"평균 OVR {avg} (자리마다 그 포지션에서의 OVR + 강화 + 적응도 5 + 팀컬러) · 총 급여 {facts['pay']}/{facts['pay_cap']}\n"
                      f"적용 팀컬러: {'; '.join(facts['teamcolors']) or '없음'}"),
         })
     for slot, player in squad:
@@ -102,7 +102,7 @@ def tactic_evidence(squad: list[tuple[str, dict]], facts: dict | None = None) ->
             "number": len(evidence) + 1, "source_type": "player_meta",
             "source_label": "선수 메타데이터 (넥슨 Open API · 위키백과 요약)",
             "title": f"{slot} 자리 — {player_label(player)}{ovr}", "url": player.get("wiki_url") or "",
-            "text": (f"{slot} 자리에서의 OVR {fact['ovr']} (강화 +{fact.get('grade') or 1} 포함)\n" if fact.get("ovr") else "")
+            "text": (f"{slot} 자리에서의 OVR {fact['ovr']} (강화 +{fact.get('grade') or 1} · 적응도 5 · 팀컬러 포함)\n" if fact.get("ovr") else "")
                     + index_text(player)[:900],
         })
     return evidence

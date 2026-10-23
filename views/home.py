@@ -10,61 +10,29 @@ import streamlit as st
 import config
 from data_prep import namu
 from data_prep.players import stat_values
+from services import aisearch
 from services.explore import describe, explore_players, suggest_conditions
-from services.finder import Filters
-from services.namufind import NamuFinder
 from views.common import Ctx, back_button, daily_wait, friendly_error, get_player, log, search_players, tile_grid
 from views.widgets import season_family, season_select
 
 AI_PAGE = 12   # AI 찾기 결과 한 화면 (2줄 × 6장) — 많으면 ◀ ▶ 로 넘긴다
 AI_VIEWS = ("선수마다 대표 카드", "모든 시즌 카드")
-# 데이터센터 조건 검색으로도 찾을 만한 사실 — 이 중 하나라도 있으면 AI 명단 밖의 카드도 '그 밖의 카드'로 보인다
-FACTS = ("nation", "league", "club", "teamcolor", "teamcolor_any", "teamcolor_also", "player_teamcolors", "traits", "traits_any",
-         "seasons", "physical", "skill_moves", "reputation")
-
-
-def _facts(filters: Filters | None, condition: str) -> Filters | None:
-    """AI 명단과 함께 데이터센터 조건 검색으로도 찾을 조건 — 국적 · 리그 · 클럽 · 팀컬러(트레블 · 듀오) · 특성 같은 사실이 있을 때.
-    수상 · 업적 말로 읽은 시즌 팀컬러('발롱도르' → Ballon d'Or 시즌 카드)는 수상자와 다르다(후보도 든다) — '팀컬러'라고 말했을
-    때만 쓴다. 포지션 · 레전드만이면 None (전체에서 OVR 높은 카드일 뿐이라)."""
-    if filters is None or filters.empty():
-        return None
-    f = filters if "팀컬러" in condition.replace(" ", "") else replace(filters, player_teamcolors=())
-    return f if any(getattr(f, name) for name in FACTS) else None
 
 
 def _run_ai_search(ctx: Ctx, condition: str) -> None:
-    """말 → 1차 나무위키 → 2차 AI 가 조건에 맞는 선수를 모두 → 3차 FC 온라인 DB 와 맞추기 (services/namufind.py).
-    AI 가 읽은 조건(국적 · 포지션 · 레전드 …)은 3차에서 카드를 거르고 국적 · 클럽을 확인하는 데 쓴다.
-    국적 · 리그 · 클럽 · 팀컬러 같은 사실이 조건에 있으면 데이터센터 조건 검색의 다른 카드도 '그 밖의 카드'로 함께 보인다 (_facts).
-    AI 명단을 하나도 맞추지 못하면 데이터센터 조건 검색으로, 그것도 없으면 분석해 둔 카드에서 뜻이 가까운 카드(예전 방식)."""
+    """말 → 조건에 맞는 길 (services/aisearch.py): 랭커 기록 · 카드 능력치 · 나무위키 → AI 명단 → FC 온라인 DB.
+    아무것도 못 찾으면 분석해 둔 카드에서 뜻이 가까운 카드(예전 방식). 진행 상황은 단계 상자(st.status)로."""
     try:
-        with st.status("🤖 AI로 찾는 중… (1차 나무위키 → 2차 AI 명단 → 3차 FC 온라인 DB)", expanded=True) as status:
-            status.write("조건 읽기 — 국적 · 포지션 · 레전드 같은 칸 (AI)")
-            filters, unknown = ctx.finder.parse(condition, ctx.model) if ctx.finder.enabled else (None, [])
-            try:
-                result = NamuFinder(namu.client(config.wiki_contact()), ctx.db, ctx.catalog, ctx.finder,
-                                    ctx.model).run(condition, filters, progress=status.write)
-            except Exception as exc:  # noqa: BLE001 — AI 명단을 못 만들면 데이터센터 조건 검색으로
-                log.exception("AI 로 찾기 (나무위키 → AI 명단) 실패")
-                status.write(f"AI 명단을 만들지 못했습니다 — {friendly_error(exc)}")
-                result = None
-            extra = []
-            players = (result or {}).get("players", [])
-            facts = _facts(filters, condition) or (filters if not players and filters is not None and not filters.empty()
-                                                   else None)   # AI 명단이 비면 읽은 조건 그대로라도
-            if facts is not None and ctx.finder.enabled:
-                status.write("데이터센터 조건 검색 — 같은 조건의 다른 카드")
-                shown = {p["pid"] for p in players}
-                extra = [r["spid"] for r in ctx.finder.search(facts) if r["spid"] % 1_000_000 not in shown]
-            status.update(label=f"🤖 AI로 찾기 — {len((result or {}).get('players', []))}명 · 다른 카드 {len(extra)}장",
-                          state="complete", expanded=False)
-        if (result and result["players"]) or extra:
-            st.session_state.explore_results = {"condition": condition, "mode": "namu", "filters": filters,
-                                                "unknown": unknown, "namu": result, "extra": extra}
-        else:
-            found = explore_players(condition, ctx.store, ctx.model, ctx.by_id, ctx.settings)
-            st.session_state.explore_results = {"condition": condition, **found}
+        with st.status("🤖 AI로 찾는 중…", expanded=True) as status:
+            found = aisearch.search(condition, finder=ctx.finder, model=ctx.model, namu=namu.client(config.wiki_contact()),
+                                    db=ctx.db, catalog=ctx.catalog, players=ctx.players, daily=ctx.daily,
+                                    progress=status.write)
+            labels = {"ranker": f"랭커 기록 순위 {len(found.get('rows', []))}장", "finder": f"카드 {len(found.get('spids', []))}장",
+                      "namu": f"{len((found.get('namu') or {}).get('players', []))}명 · 다른 카드 {len(found.get('extra', []))}장"}
+            status.update(label=f"🤖 AI로 찾기 — {labels.get(found['mode'], '예전 방식으로')}", state="complete", expanded=False)
+        if found["mode"] == "none":
+            found = {"condition": condition, **explore_players(condition, ctx.store, ctx.model, ctx.by_id, ctx.settings)}
+        st.session_state.explore_results = found
         st.session_state.ai_page = st.session_state.ai_page2 = 0
         ctx.db.log_search(condition)
     except Exception as exc:  # noqa: BLE001
@@ -138,6 +106,16 @@ def _namu_results(ctx: Ctx, found: dict) -> None:
                      for m in res.get("missing", [])]
             lines += [f"- **{escape(d['name'])}** — {escape(d['reason'])}" for d in res.get("dropped", [])]
             st.markdown("\n".join(lines))
+    usage = found.get("usage")
+    if usage:
+        st.markdown(f'<div class="fc-section">📈 게임 안의 최고 — 랭커가 {escape(" · ".join(usage["codes"]))} 에 가장 많이 쓰는 카드'
+                    f'<small>어제 데일리 차트 {escape(usage["date"])} · 공식 경기 랭커 상위 1만 명 · 조건의 현역 · 레전드로 거름</small></div>',
+                    unsafe_allow_html=True)
+        by_id = {}
+        for r in usage["rows"]:
+            by_id.setdefault(str(r["spid"]), r)
+        tile_grid(ctx, [get_player(ctx, s) for s in by_id], key="aiu",
+                  kpi=lambda p: f"랭커 <b>{by_id[p['player_id']]['share']:.1f}%</b> 사용 · +{by_id[p['player_id']]['grade']}강")
     if found.get("extra"):
         st.markdown(f'<div class="fc-section">📋 데이터센터 조건 검색 — 그 밖의 카드<small>{len(found["extra"])}장'
                     f'{" (OVR 높은 순 200장까지)" if len(found["extra"]) >= 190 else ""} · AI 명단에 없어도 조건에 맞는 카드'
@@ -148,13 +126,70 @@ def _namu_results(ctx: Ctx, found: dict) -> None:
                    "FC 온라인 데이터, 국적 · 클럽 조건은 데이터센터 선수 검색으로 확인합니다. AI 지식으로 넣은 선수는 따로 표시합니다.")
 
 
+def _ranker_results(ctx: Ctx, found: dict) -> None:
+    """랭커 기록으로 찾은 카드 — 분석해 둔 카드(카드별 최근 최대 20경기 평균)의 그 스탯 순위 12장씩 + 어제 데일리 기록 TOP."""
+    from views.ranking import daily_value
+
+    name, unit = found["stat_name"], found["unit"]
+    rows = found["rows"]
+    st.markdown(f'<div class="fc-section">🤖 AI로 찾기 — "{escape(found["condition"])}"<small>랭커 기록으로 줄 세웠습니다 — '
+                f'FC 온라인 공식경기 랭커 · 카드별 최근 최대 20경기 평균 (최소 {aisearch.RANKER_MIN}경기) · '
+                '나무위키 · AI 는 이 기록을 모릅니다</small></div>', unsafe_allow_html=True)
+    chips = [f"기준 {name}{' (경기당)' if not unit else ''} 높은 순"]
+    if found["groups"]:
+        chips.append("포지션 " + " · ".join(found["groups"]))
+    if found["kind"] != "전체":
+        chips.append(f"{found['kind']}만")
+    st.markdown('<div class="fc-chips"><span class="fc-chip lead">AI가 읽은 조건</span>'
+                + "".join(f'<span class="fc-chip">{escape(c)}</span>' for c in chips) + "</div>", unsafe_allow_html=True)
+    if rows:
+        by_spid = {r["spid"]: r for r in rows}
+        ranks = {str(r["spid"]): f"{i}위" for i, r in enumerate(rows, start=1)}
+        total = len(rows)
+        pages = (total + AI_PAGE - 1) // AI_PAGE
+        page = min(st.session_state.get("ai_page", 0), pages - 1)
+        shown = [get_player(ctx, str(r["spid"])) for r in rows[page * AI_PAGE: (page + 1) * AI_PAGE]]
+        tile_grid(ctx, shown, key=f"air{page}", badges={k: v for k, v in ranks.items()},
+                  kpi=lambda p: f"{escape(name)} <b>{by_spid[p['spid']]['value']:.{0 if unit else 2}f}{unit}</b> · "
+                                f"{by_spid[p['spid']]['matches']}경기")
+        if pages > 1:
+            prev_col, info_col, next_col = st.columns([1, 2, 1])
+            prev_col.button("◀ 이전", key="air_prev", disabled=page == 0, width="stretch",
+                            on_click=lambda: st.session_state.update(ai_page=page - 1))
+            info_col.markdown(f"<div style='text-align:center;padding-top:6px'>{page + 1} / {pages}</div>", unsafe_allow_html=True)
+            next_col.button("다음 ▶", key="air_next", disabled=page >= pages - 1, width="stretch",
+                            on_click=lambda: st.session_state.update(ai_page=page + 1))
+    else:
+        st.info("이 포지션 · 구분으로 분석해 둔 랭커 기록이 아직 없습니다 — 아래 어제 데일리 기록을 보세요.")
+    daily = found.get("daily")
+    if daily is not None:
+        st.markdown(f'<div class="fc-section">📅 어제 데일리 기록 — {escape(daily["label"])} TOP<small>{escape(daily["date"])} · '
+                    '공식 경기 랭커 상위 1만 명이 쓴 카드 (FC 온라인 데이터센터) · 같은 포지션 · 구분만</small></div>',
+                    unsafe_allow_html=True)
+        if daily["rows"]:
+            by_id = {}
+            for r in daily["rows"]:
+                by_id.setdefault(str(r["spid"]), r)   # 같은 카드는 한 번만 (순위가 높은 쪽)
+            tile_grid(ctx, [get_player(ctx, s) for s in by_id], key="aird",
+                      kpi=lambda p: f"{escape(daily['label'])} <b>{daily_value(daily['order'], by_id[p['player_id']]['stats'])}</b>"
+                                    f" · +{by_id[p['player_id']].get('grade') or 1}강")
+        else:
+            st.caption("어제 기록 TOP 18 에는 이 포지션 · 구분의 카드가 없습니다.")
+
+
 def _finder_results(ctx: Ctx, found: dict) -> None:
-    """AI 로 찾은 카드 — AI 가 읽은 조건(칩) · 데이터센터에서 거른 카드를 한 화면 12장씩 (◀ ▶)."""
+    """데이터센터 조건 검색으로 찾은 카드 — AI 가 읽은 조건(칩) · 선수마다 대표 카드(그 조건에 맞는 카드 중 가장 앞 — OVR 높은 순,
+    능력치 조건이면 그 능력치 높은 순) 또는 모든 카드를 12장씩 (◀ ▶). 같은 선수가 시즌만 달리 줄줄이 나오지 않게 대표 카드가 기본."""
     filters, spids = found["filters"], found["spids"]
     total = len(spids)
-    st.markdown(f'<div class="fc-section">🤖 AI로 찾기 — "{escape(found["condition"])}"<small>{total}장'
-                f'{" (데이터센터 검색은 OVR 높은 순 200장까지)" if total >= 200 else ""} · 국적 · 포지션 같은 사실은 '
-                'FC 온라인 데이터센터 데이터로 거릅니다</small></div>', unsafe_allow_html=True)
+    first: dict[int, int] = {}
+    for spid in spids:
+        first.setdefault(spid % 1_000_000, spid)
+    how = (f"{escape(filters.chips()[-1])} — 카드 능력치로 줄 세웠습니다" if found.get("way") == "ability"
+           else "국적 · 리그 · 클럽 · 포지션 · 레전드 · 현역 같은 사실은 FC 온라인 데이터센터 데이터로 거릅니다")
+    st.markdown(f'<div class="fc-section">🤖 AI로 찾기 — "{escape(found["condition"])}"<small>{len(first)}명 · {total}장'
+                f'{" (데이터센터 검색은 OVR 높은 순 200장까지)" if total >= 200 else ""} · {how}</small></div>',
+                unsafe_allow_html=True)
     read = "".join(f'<span class="fc-chip">{escape(c)}</span>' for c in filters.chips(ctx.finder.season_names()))
     st.markdown(f'<div class="fc-chips"><span class="fc-chip lead">AI가 읽은 조건</span>{read}</div>', unsafe_allow_html=True)
     if found.get("unknown"):
@@ -162,18 +197,10 @@ def _finder_results(ctx: Ctx, found: dict) -> None:
     if not total:
         st.info("조건에 맞는 카드가 없습니다. 조건을 줄여 보세요.")
         return
-    pages = (total + AI_PAGE - 1) // AI_PAGE
-    page = min(st.session_state.get("ai_page", 0), pages - 1)
-    shown = [get_player(ctx, str(s)) for s in spids[page * AI_PAGE: (page + 1) * AI_PAGE]]
-    tile_grid(ctx, shown, key=f"ai{page}")
-    if pages > 1:
-        prev_col, info_col, next_col = st.columns([1, 2, 1])
-        prev_col.button("◀ 이전", key="ai_prev", disabled=page == 0, width="stretch",
-                        on_click=lambda: st.session_state.update(ai_page=page - 1))
-        info_col.markdown(f"<div style='text-align:center;padding-top:6px'>{page + 1} / {pages} · "
-                          f"{page * AI_PAGE + 1}~{min(total, (page + 1) * AI_PAGE)}번째</div>", unsafe_allow_html=True)
-        next_col.button("다음 ▶", key="ai_next", disabled=page >= pages - 1, width="stretch",
-                        on_click=lambda: st.session_state.update(ai_page=page + 1))
+    st.session_state.setdefault("ai_view", AI_VIEWS[0])
+    view = st.segmented_control("보기", AI_VIEWS, key="ai_view", label_visibility="collapsed",
+                                on_change=lambda: st.session_state.update(ai_page=0)) or AI_VIEWS[0]
+    _pages(ctx, list(first.values()) if view == AI_VIEWS[0] else spids, "ai", "ai_page")
 
 
 def _shuffle_chips(ctx: Ctx) -> None:
@@ -236,7 +263,9 @@ def render(ctx: Ctx) -> None:
         st.caption("찾고 싶은 조건을 먼저 적어 주세요.")
 
     found = st.session_state.explore_results
-    if found and found.get("mode") == "namu":
+    if found and found.get("mode") == "ranker":
+        _ranker_results(ctx, found)
+    elif found and found.get("mode") == "namu":
         _namu_results(ctx, found)
     elif found and found.get("mode") == "finder":
         _finder_results(ctx, found)

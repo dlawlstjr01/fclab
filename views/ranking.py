@@ -158,6 +158,7 @@ LINES = {"전체": None, "공격수": {"ST", "CF", "LW", "RW", "LS", "RS", "LF",
          "미드필더": {"CAM", "CM", "CDM", "LM", "RM", "LAM", "RAM", "LCM", "RCM", "LDM", "RDM"},
          "수비수": {"CB", "LB", "RB", "LWB", "RWB", "SW", "LCB", "RCB"}, "골키퍼": {"GK"}}
 MODE_LABELS = {"official": "공식 경기 1 ON 1", "manager": "감독 모드"}
+MODE_SHORT = {"official": "공식 경기", "manager": "감독 모드"}   # 고르기 버튼 — 긴 이름은 칸을 넘겨 두 줄이 됐다
 
 
 def daily_value(key: str, stats: dict) -> str:
@@ -178,13 +179,13 @@ def daily_value(key: str, stats: dict) -> str:
 
 def _daily_board(ctx: Ctx) -> None:
     """데일리 기록 TOP — 기록 · 모드 · 구분(현역 · 레전드) · 줄(공격 · 미드 · 수비 · 골키퍼)을 골라 본다."""
-    o_col, m_col, k_col, l_col = st.container(key="wrap_dailyfilters").columns([2, 1.6, 1.2, 3])
+    o_col, m_col, k_col, l_col = st.container(key="wrap_dailyfilters").columns([2, 1.9, 1.2, 3])
     names = {label: key for key, label in DAILY_STATS.items()}
     label = o_col.selectbox("기록", list(names), key="daily_order")
     mode = m_col.segmented_control("모드", list(MODE_LABELS), default="official", key="daily_mode",
-                                   format_func=MODE_LABELS.get) or "official"
+                                   format_func=MODE_SHORT.get, help="공식 경기 1 ON 1 · 감독 모드 랭커의 기록") or "official"
     kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="daily_kind",
-                           help="레전드 = 아이콘 카드가 있는 선수의 모든 시즌 카드")
+                           help="레전드 = 아이콘 카드가 있는 선수의 모든 시즌 카드 · 현역 = 최근 두 해의 현역 시즌(LIVE · TOTS · PL …) 카드가 있는 선수")
     line = l_col.pills("줄", list(LINES), default="전체", key="daily_line") or "전체"
     cond = _conditions(ctx, "dc", ranker=False)
     order = names[label]
@@ -196,9 +197,9 @@ def _daily_board(ctx: Ctx) -> None:
             st.info("데일리 기록을 불러오지 못했습니다. 잠시 뒤 다시 열어 주세요.")
         return
     rows = data["rows"]
-    legends = ctx.finder.legends()
+    legends, actives = ctx.finder.legends(), ctx.finder.actives()
     if kind != "전체":
-        rows = [r for r in rows if (r["spid"] % 1_000_000 in legends) == (kind == "레전드")]
+        rows = [r for r in rows if r["spid"] % 1_000_000 in (legends if kind == "레전드" else actives)]
     if LINES[line]:
         rows = [r for r in rows if r["position"] in LINES[line]]
     if cond:
@@ -299,7 +300,8 @@ def _ranker_board(ctx: Ctx) -> None:
     st.session_state.setdefault("rank_group", "전체")   # 기본값은 세션으로 — 뒤로 돌아올 때 되살린 값과 겹치지 않게
     group = g_col.pills("포지션", ["전체"] + list(POSITION_GROUPS), key="rank_group", on_change=first_page)
     group = None if group in (None, "전체") else group
-    kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="rank_kind", on_change=first_page)
+    kind = k_col.selectbox("구분", ["전체", "현역", "레전드"], key="rank_kind", on_change=first_page,
+                           help="레전드 = 아이콘 카드가 있는 선수의 모든 시즌 카드 · 현역 = 최근 두 해의 현역 시즌(LIVE · TOTS · PL …) 카드가 있는 선수")
     names = {SORT_LABELS[k]: k for k in SORT_STATS.get(group, SORT_STATS[None])} | {APPLIED: "applied"}   # 포지션에 맞는 정렬만
     if st.session_state.get("rank_sort") not in names:
         st.session_state.rank_sort = next(iter(names))
@@ -314,7 +316,7 @@ def _ranker_board(ctx: Ctx) -> None:
 
     key = names[sort_name]
     rows = leaderboard(with_saves(ctx, ctx.players), group, kind or "전체", "match_count" if key == "applied" else key,
-                       min_matches, ctx.finder.legends())
+                       min_matches, ctx.finder.legends(), ctx.finder.actives())
     matched = _match(ctx, cond, [r["player"]["spid"] for r in rows]) if cond else None
     if matched is not None:
         rows = [r for r in rows if r["player"]["spid"] in matched]

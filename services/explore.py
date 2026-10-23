@@ -61,6 +61,24 @@ def suggest_conditions(counts: dict[str, int], k: int = 5, rng: random.Random | 
     return sorted(weights, key=lambda q: rng.random() ** (1 / weights[q]), reverse=True)[:k]
 
 
+RANKER_HINTS = ("많", "높", "랭커", "성공률")   # 랭커 기록으로 줄 세우는 말 — '좋은'만이면 카드 능력치로 (services/aisearch.py)
+
+
+def _stat(text: str) -> str | None:
+    """조건의 랭커 스탯 키 — '골키퍼'의 '골'은 골(득점)이 아니다."""
+    plain = text.replace("골키퍼", "")
+    stat = next((key for key, words in STAT_WORDS.items() if any(w.replace(" ", "") in plain for w in words)), None)
+    return "effective_shoot" if stat == "shoot" and "유효슈팅" in plain else stat
+
+
+def ranker_stat(condition: str) -> str | None:
+    """랭커 기록으로 줄 세울 조건이면 그 스탯 키 — '랭커가 골을 많이 넣는' → goal, '유효슈팅이 많은' → effective_shoot,
+    '패스 성공률이 높은' → pass_rate, '블록을 많이 하는' → block. '드리블이 좋은'처럼 '좋은'만이면 None (카드 능력치로)."""
+    text = condition.replace(" ", "")
+    stat = _stat(text)
+    return stat if stat and any(h in text for h in RANKER_HINTS) else None
+
+
 def parse_condition(condition: str) -> dict:
     """조건 문장 → {groups, stat, kind}. 못 읽으면 빈 값 — 의미 검색만으로 진행한다."""
     text = condition.replace(" ", "")
@@ -70,9 +88,7 @@ def parse_condition(condition: str) -> dict:
             if word in text:
                 groups = gs
                 break
-    stat = next((key for key, words in STAT_WORDS.items() if any(w.replace(" ", "") in text for w in words)), None)
-    if stat == "shoot" and "유효슈팅" in text:
-        stat = "effective_shoot"
+    stat = _stat(text)
     kind = "레전드" if any(w in text for w in ("레전드", "아이콘", "ICON", "은퇴")) else ("현역" if "현역" in text else None)
     return {"groups": groups, "stat": stat, "kind": kind}
 

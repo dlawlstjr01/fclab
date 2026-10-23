@@ -20,13 +20,13 @@ from difflib import SequenceMatcher
 
 from data_prep.namu import LICENSE, NamuError
 from data_prep.nexon_api import split_spid
-from data_prep.prompts import namu_list_messages, namu_plan_messages
+from data_prep.prompts import namu_list_messages, namu_plan_messages, namu_verify_messages
 from llm import parse_json, reply_text
-from services.finder import PAGE_LIMIT, Filters, card_ok
+from services.finder import PAGE_LIMIT, Filters, active_years, card_ok
 
 log = logging.getLogger("fclab.namufind")
 
-CACHE_KEY = "namufind:v5:"
+CACHE_KEY = "namufind:v9:"
 CACHE_HOURS = 24
 SEARCH_LIMIT = 20
 DOCS_MAX = 3
@@ -40,9 +40,7 @@ LIST_WORDS = ("수상자", "역대", "명단", "스쿼드", "선수", "멤버", 
 STOP = {"선수", "선수들", "받은", "출신", "있는", "하는", "많은", "많이", "찾아줘", "알려줘", "보여줘", "카드", "중에", "중",
         "및", "그리고", "FC", "온라인"}
 NOT_MATCH = ("아니지만", "아니다", "아님", "못했", "못 했", "없지만", "제외")   # LLM 이 근거에 '조건에 안 맞는다'고 적은 선수
-# 그해 현역이던 선수만 받는 시즌 (24 LIVE · 25 TOTS · 25 PL · 25 UCL · 26KLeague · 23NG …) — 동명이인을 시대로 가릴 때
 ERA_LAST, ERA_GAP = 2008, 6   # 이 해까지 은퇴했다는 선수인데 그보다 6년 넘게 뒤의 현역 카드만 있으면 다른 사람
-ACTIVE_SEASON = re.compile(r"^(\d{2}) ?(LIVE|TOTS|TOTY|PL|PLA|PLS|UCL|KLeague|KB|NG)\b")
 
 
 # ── 이름 맞추기 (3차) ──────────────────────────────────────────────
@@ -138,7 +136,25 @@ def match_name(index: dict, names: list[str]) -> tuple[set[int], str, float]:
     return set(), "", 0.0
 
 
+def main_position(cards: list[int], known: dict[int, dict]) -> str | None:
+    """선수의 주 포지션 — 카드마다의 대표 포지션 중 가장 많은 것."""
+    mains = Counter((known.get(s) or {}).get("positions", [[None]])[0][0] for s in cards if (known.get(s) or {}).get("positions"))
+    return mains.most_common(1)[0][0] if mains else None
+
+
+def main_position_ok(cards: list[int], known: dict[int, dict], positions: tuple[str, ...]) -> bool:
+    """카드의 절반 이상이 그 자리(대표 포지션)인가 — '스트라이커'에 윙어(ST 카드가 몇 장 있는 래시포드 · 마네)를 넣지 않게.
+    대표 포지션을 아는 카드가 없으면 그대로 둔다."""
+    mains = [(known.get(s) or {}).get("positions", [[None]])[0][0] for s in cards if (known.get(s) or {}).get("positions")]
+    return not mains or sum(1 for m in mains if m in positions) * 2 >= len(mains)
+
+
 # ── 발췌 (1차) ─────────────────────────────────────────────────────
+
+def women(title: str) -> bool:
+    """여자 축구 문서 — FC 온라인은 남자 선수만 ('대한민국 여자 축구 국가대표팀'을 골라 엉뚱한 명단이 나왔다)."""
+    return any(w in title for w in ("여자", "여성", "WK리그", "위민"))
+
 
 def keywords(*texts: str) -> list[str]:
     """조건 · 계획에서 문서를 고를 말 — 두 글자 이상, 흔한 말은 뺀다 (순서 그대로, 같은 말은 한 번)."""
@@ -175,16 +191,6 @@ def excerpt(doc: dict, words: list[str], budget: int = DOC_CHARS) -> str:
             break
     parts = [f"## {path}\n{doc['sections'][i]['text']}" for i, path in picked]   # 점수 높은(명단 표) 부분부터
     return "\n".join(parts)[:budget]
-
-
-def active_years(catalog, pid: int) -> list[int]:
-    """그 선수가 현역으로 받은 시즌의 해 (24 LIVE → 2024) — 레전드 · 스페셜 시즌은 세지 않는다."""
-    years = []
-    for spid in catalog.cards_of(pid):
-        m = ACTIVE_SEASON.match(catalog.season_name(spid))
-        if m:
-            years.append(2000 + int(m.group(1)))
-    return years
 
 
 def parse_rows(reply: str) -> list[dict]:
@@ -231,8 +237,8 @@ class NamuFinder:
             log.warning("읽을 나무위키 문서 고르기(LLM) 실패: %s", exc)
         out["kind"] = "attribute" if plan.get("kind") == "attribute" else "list"
         out["keywords"] = keywords(condition, " ".join(str(k) for k in plan.get("keywords") or []))
-        titles = [str(t).strip() for t in plan.get("docs") or [] if str(t).strip()][:DOCS_MAX]
-        titles = titles or [r["title"] for r in out["search"][:2]]
+        titles = [str(t).strip() for t in plan.get("docs") or [] if str(t).strip() and not women(str(t))][:DOCS_MAX]
+        titles = titles or [r["title"] for r in out["search"] if not women(r["title"])][:2]
         for title in titles:
             try:
                 doc = self.namu.document(title, self.db)
@@ -265,7 +271,25 @@ class NamuFinder:
             seen.add(norm(row["name"]))
             cited = any(norm(n) and norm(n) in plain for n in [row["name"]] + row["aliases"])
             players.append({**row, "src": "나무위키" if cited else "AI 지식"})
-        return players[:PLAYERS_MAX]
+        return self.verify_knowledge(condition, players[:PLAYERS_MAX])
+
+    def verify_knowledge(self, condition: str, players: list[dict]) -> list[dict]:
+        """발췌에 근거가 없는 'AI 지식' 선수만 LLM 에 한 번 더 — 조건이 사실인지 하나씩 따져 확실한 선수만 남긴다 (한 번에 묻는다).
+        명단을 만들 때는 그럴듯한 이름을 채워 넣는다 (월드컵 우승 프랑스 선수에 칸토나 · 지놀라). 확인을 못 하면 그대로 둔다."""
+        unsure = [p for p in players if p["src"] == "AI 지식"]
+        if not unsure:
+            return players
+        lines = [f"{i}. {p['name']} ({p['nation'] or '?'}) — 근거: {p['why'] or '-'}" for i, p in enumerate(unsure, start=1)]
+        try:
+            data = parse_json(reply_text(self.model.invoke(namu_verify_messages(condition, lines), temperature=0)), dict)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("AI 지식 확인(LLM) 실패: %s", exc)
+            return players
+        if not data or not isinstance(data.get("ok"), list):
+            return players
+        ok = {int(n) for n in data["ok"] if str(n).isdigit()}
+        wrong = {id(p) for i, p in enumerate(unsure, start=1) if i not in ok}
+        return [p for p in players if id(p) not in wrong]
 
     # 3차 — DB
     def match(self, players: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -289,12 +313,12 @@ class NamuFinder:
     def pick_cards(self, found: list[dict], f: Filters) -> tuple[list[dict], list[dict]]:
         """선수마다 조건에 맞는 카드 — 레전드(아이콘 카드가 있는 선수) · 카드 조건(포지션 · OVR · 급여 · 주발)은 모아 둔 능력치로.
         같은 이름의 선수가 여럿이면 맞는 카드가 많은(그다음 카드가 많은) 선수. (남은 선수, 뺀 선수 — reason 과 함께)."""
-        legends = self.finder.legends()
+        legends, actives = self.finder.legends(), self.finder.actives()
         known = self._stats([s for p in found for pid in p["pids"] for s in self.catalog.cards_of(pid)])
         card_rules = any((f.seasons, f.positions, f.ovr_min, f.ovr_max, f.pay_min, f.pay_max, f.foot, f.weak_foot))
         kept, dropped = [], []
         for p in found:
-            options, other_era = [], []
+            options, other_era, off_position = [], [], []
             for pid in p["pids"]:
                 late = [y for y in active_years(self.catalog, pid)
                         if p.get("last") and p["last"] <= ERA_LAST and y >= p["last"] + ERA_GAP]
@@ -303,18 +327,23 @@ class NamuFinder:
                     # (LLM 이 적은 해가 틀렸어도 국적이 맞으면 같은 사람으로 둔다 — 호날두를 '2008년까지'라고 적는 일)
                     other_era.append(max(late))
                     continue
-                if f.legend is not None and (pid in legends) != f.legend:
+                if f.legend is not None and pid not in (legends if f.legend else actives):   # 레전드만 · 현역만
                     continue
                 cards = self.catalog.cards_of(pid)
                 ok = [s for s in cards if card_ok(f, s, known.get(s))] if card_rules else cards
+                if ok and f.positions and not main_position_ok(cards, known, f.positions):
+                    off_position.append(f"그 자리 카드 {len(ok)}/{len(cards)}장, 가장 많은 자리 {main_position(cards, known) or '?'}")
+                    continue   # 그 자리 카드가 몇 장 있어도 주 포지션이 아니면 뺀다
                 if ok:
                     options.append((len(ok), len(cards), pid, ok))
             if not options:
                 if other_era and len(other_era) == len(p["pids"]):
                     reason = (f"이름만 같은 다른 선수 — FC 온라인의 '{p['db_name']}'은(는) {max(other_era)}년 현역 카드가 있는 선수"
                               f" ({p['name']} 은(는) {p['last']}년까지)")
-                elif f.legend is not None and not any((pid in legends) == f.legend for pid in p["pids"]):
-                    reason = "레전드가 아님" if f.legend else "레전드(은퇴) 선수"
+                elif off_position:
+                    reason = f"주 포지션이 그 자리가 아님 ({off_position[0]})"
+                elif f.legend is not None and not any(pid in (legends if f.legend else actives) for pid in p["pids"]):
+                    reason = "레전드(아이콘 카드)가 아님" if f.legend else "현역이 아님 (최근 두 해의 현역 카드가 없다)"
                 else:
                     reason = "카드 조건(포지션 · OVR · 급여 · 주발)이 맞지 않음"
                 dropped.append({**p, "reason": reason})

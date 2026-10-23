@@ -5,6 +5,7 @@
   클럽 팀컬러는 선수의 클럽 경력 기준이다.
 - 강화 팀컬러(동빛 · 은빛 · 금빛 · 백금빛 물결)는 카드가 아니라 강화 등급으로 정해진다 ('8강 이상의 선수들로…').
 - 공식 스쿼드 메이커처럼 소속 · 강화 · 관계마다 하나씩 적용된다 — 여기서는 효과가 가장 큰 것(같으면 단계 · 인원 순).
+- 단일팀 · 단일국가(POOLED)는 스쿼드 계산에서 뺀다 — 서로 다른 작은 클럽 · 나라를 한 이름으로 보여 주는 것이라 묶어 세면 안 된다.
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ SOURCE = {"소속": "소속", "특성": "관계"}   # 카드 상세(teamcolors)�
 LIST_MAX_AGE = timedelta(hours=24)
 DETAIL_MAX_AGE_DAYS = 30
 RETRY_SECONDS = 600
+# 단일팀 · 단일국가 — 따로 팀컬러가 없는 작은 클럽 · 나라를 데이터센터가 한 이름으로 보여 주는 것 (이니에스타의 비셀 고베,
+# 델피에로의 시드니 FC, 로이 킨의 아일랜드 …). 카드의 약 90%에 붙어 있고 어느 클럽 · 나라인지는 알려 주지 않는다.
+# 같은 클럽 · 나라 선수끼리만 모이는 팀컬러인데 이 번호로 세면 서로 다른 클럽 선수들이 한 팀컬러로 잡혀 거의 모든 스쿼드에
+# 없는 3 · 4단계(+3 · +4)가 붙는다 — 스쿼드 계산에서 뺀다. 팀컬러 목록에도 없는 번호라 상세를 받아도 표에 둘 곳이 없었다.
+POOLED = {90000000, 91000000}
 
 
 class TeamColorService:
@@ -38,6 +44,7 @@ class TeamColorService:
         self._worker: threading.Thread | None = None
         self._refreshing = False
         self._memo: tuple[float, list[dict], str | None] | None = None   # (읽은 때, 목록, 받은 때) — 화면마다 800개를 다시 풀지 않게
+        self._loose: dict[int, dict] = {}   # 목록(표)에 아직 없는 팀컬러의 상세 — 표에 둘 곳이 없어 메모리에 (2초마다 다시 묻던 것)
 
     # ── 목록 ────────────────────────────────────────────────────
 
@@ -88,7 +95,15 @@ class TeamColorService:
     # ── 단계별 조건 · 효과 ─────────────────────────────────────────
 
     def details(self, ids: list[int]) -> dict[int, dict]:
-        return self.db.teamcolor_details(list(ids), DETAIL_MAX_AGE_DAYS)
+        have = self.db.teamcolor_details(list(ids), DETAIL_MAX_AGE_DAYS)
+        return have | {i: self._loose[i] for i in ids if i not in have and i in self._loose}
+
+    def _keep(self, teamcolor_id: int, detail: dict) -> None:
+        """받은 상세를 표에 — 목록에 아직 없는 팀컬러(새로 생긴 것 · 단일팀)는 표에 줄이 없어 메모리에 둔다.
+        두지 못하면 받을 때마다 '없음'이 되어 스쿼드 화면이 2초마다 같은 상세를 다시 묻고, 정확한 OVR 을 끝내 묻지 못했다."""
+        if not self.db.put_teamcolor_detail(teamcolor_id, detail):
+            self._loose[teamcolor_id] = detail
+        self._memo = None
 
     def detail_now(self, teamcolor_id: int) -> dict | None:
         """지금 받는다 (AI 추천 스쿼드에서 팀컬러를 골랐을 때)."""
@@ -97,7 +112,7 @@ class TeamColorService:
             return have.get(teamcolor_id)
         detail = self.client.teamcolor_detail(teamcolor_id)
         if detail:
-            self.db.put_teamcolor_detail(teamcolor_id, detail)
+            self._keep(teamcolor_id, detail)
         return detail
 
     def want(self, ids: list[int]) -> None:
@@ -132,8 +147,7 @@ class TeamColorService:
             try:
                 detail = self.client.teamcolor_detail(teamcolor_id)
                 if detail:
-                    self.db.put_teamcolor_detail(teamcolor_id, detail)
-                    self._memo = None
+                    self._keep(teamcolor_id, detail)
                 else:
                     self._failed[teamcolor_id] = time.monotonic()
             except MarketBlocked:
@@ -192,7 +206,8 @@ def squad_teamcolors(members: list[dict], teamcolors: list[dict], details: dict[
     for m in members:
         for group, source in SOURCE.items():
             for t in (m.get("teamcolors") or {}).get(source, []):
-                counted[group].setdefault(t["id"], []).append(m)
+                if t["id"] not in POOLED:   # 단일팀 · 단일국가는 서로 다른 클럽 · 나라를 묶은 이름 — 세지 않는다
+                    counted[group].setdefault(t["id"], []).append(m)
     for tc in teamcolors:   # 강화 팀컬러 — 등급으로
         min_grade = (tc.get("detail") or details.get(tc["id"]) or {}).get("min_grade")
         if tc["kind"] == "강화" and min_grade:

@@ -86,6 +86,9 @@ class FakeChat:
             if "발롱도르" in messages[-1]["content"].split("[나무위키]")[0]:   # 조건 칸만 본다 (발췌에도 발롱도르가 있다)
                 return SimpleNamespace(content="\n".join(NAMU_ROWS))
             return SimpleNamespace(content="손흥민 | - | 대한민국 | FW | 0 | 대한민국 국가대표 공격수 | N")
+        if "축구 사실 확인 도우미" in system:   # AI 로 찾기 — 발췌에 근거가 없는 'AI 지식' 선수를 한 번 더 확인
+            self.calls.append("namu_verify")
+            return SimpleNamespace(content='{"ok": [1]}')
         if "선수 카드가 맞는지" in system:
             self.calls.append("explore")
             return SimpleNamespace(content='[{"no": 2, "match": true, "reason": "조건과 맞는 이유"}, '
@@ -620,6 +623,64 @@ check(before_code != after_code and code_version("없는파일.py") == "-",
       "서비스 코드가 바뀌면 조건 검색 · 데일리 기록 객체를 새로 만든다 (cache_resource 키에 파일이 바뀐 때를 넣는다 — 켜진 앱이 "
       "예전 객체를 계속 써서 'object has no attribute' 가 나던 것)")
 
+import runtime_guard  # noqa: E402
+
+guard_dir = tmp / "guard_pkg"
+guard_dir.mkdir(exist_ok=True)
+(guard_dir / "guard_probe_mod.py").write_text("VALUE = 1\n", encoding="utf-8")
+sys.path.insert(0, str(guard_dir))
+import guard_probe_mod  # noqa: E402
+
+first_scan = runtime_guard.reload_changed(guard_dir)   # 처음 본 모듈 — 지금 수정 시각을 적어 둔다
+(guard_dir / "guard_probe_mod.py").write_text("VALUE = 2\n", encoding="utf-8")
+os.utime(guard_dir / "guard_probe_mod.py", ns=(1_800_000_000_000_000_000, 1_800_000_000_000_000_000))
+changed_scan = runtime_guard.reload_changed(guard_dir)
+gone = "guard_probe_mod" not in sys.modules
+import guard_probe_mod as guard_again  # noqa: E402
+
+check(first_scan == [] and changed_scan == ["guard_probe_mod"] and gone and guard_again.VALUE == 2
+      and runtime_guard.reload_changed(guard_dir) == []
+      and runtime_guard.needs_restart(["services.finder"]) and not runtime_guard.needs_restart(["views.home", "ui_parts"]),
+      "켜 둔 앱: 읽은 뒤 파일이 바뀐 프로젝트 모듈이 있으면 모두 내려 새로 고친 창도 새 코드로 (Streamlit 은 같은 창에서 다시 "
+      "실행할 때만 다시 읽었다) · 서비스 쪽이 바뀌면 다시 켜기 안내")
+sys.path.remove(str(guard_dir))
+if sys.platform == "win32":
+    from asyncio import proactor_events  # noqa: E402
+
+    runtime_guard.quiet_connection_reset()
+    runtime_guard.quiet_connection_reset()   # 두 번 불러도 한 번만 바꿔 끼운다
+
+    class ResetSock:
+        closed = False
+
+        def fileno(self):
+            return 3
+
+        def shutdown(self, how):
+            raise ConnectionResetError(10054, "현재 연결은 원격 호스트에 의해 강제로 끊겼습니다")
+
+        def close(self):
+            ResetSock.closed = True
+
+    class GuardServer:
+        detached = False
+
+        def _detach(self):
+            GuardServer.detached = True
+
+    lost = []
+    fake_transport = SimpleNamespace(_called_connection_lost=False, _sock=ResetSock(), _server=GuardServer(),
+                                     _protocol=SimpleNamespace(connection_lost=lambda exc: lost.append(exc)))
+    try:
+        proactor_events._ProactorBasePipeTransport._call_connection_lost(fake_transport, None)
+        raised = None
+    except Exception as exc:  # noqa: BLE001
+        raised = exc
+    check(raised is None and lost == [None] and ResetSock.closed and GuardServer.detached
+          and fake_transport._sock is None and fake_transport._server is None and fake_transport._called_connection_lost,
+          "브라우저 연결이 갑자기 끊겨 shutdown 이 WinError 10054 를 내도 트레이스백 없이 소켓을 닫고 정리를 마친다 "
+          "(Exception in callback _ProactorBasePipeTransport._call_connection_lost)")
+
 
 class FakeFinder:   # 시즌 셋을 한 번에 물으면 200장(잘림), 시즌마다 물으면 그 시즌의 카드
     def __init__(self):
@@ -678,7 +739,7 @@ check([(v.club, v.club_history, v.league) for v in legend_league] == [("아스�
       "AI 찾기: '프리미어리그 레전드' — 리그는 지금 소속이라 은퇴한 레전드가 없어, 그 리그 클럽마다 클럽 경력으로 묻는다 "
       "(현역 조건은 그대로 리그로)")
 from data_prep.namu import parse_document, parse_search  # noqa: E402
-from services.finder import legend_pids  # noqa: E402
+from services.finder import active_pids, legend_pids  # noqa: E402
 from services.namufind import NamuFinder, excerpt, keywords, match_name, name_index, parse_rows, similar  # noqa: E402
 
 doc = parse_document(NAMU_HTML, "발롱도르")
@@ -706,11 +767,14 @@ check(similar("바비 찰튼", "보비 찰턴") >= 0.8 and similar("안드리 �
       "('데니스 로' ≠ '데니스', '파올로 로시' ≠ 'F. 로시')")
 
 
-class NamuFinderStub:   # 데이터센터가 꺼진 조건 검색 — 레전드만 안다
+class NamuFinderStub:   # 데이터센터가 꺼진 조건 검색 — 레전드 · 현역만 안다
     enabled = False
 
     def legends(self):
         return legend_pids(catalog)
+
+    def actives(self):
+        return active_pids(catalog)
 
 
 chat_ = FakeChat()
@@ -728,6 +792,37 @@ calls_before = list(chat_.calls)
 again_ = namu_finder.run("발롱도르 받은 선수", None)
 check(chat_.calls == calls_before and [p_["name"] for p_ in again_["players"]] == [p_["name"] for p_ in found_["players"]],
       "같은 조건은 하루 동안 나무위키 · AI 명단을 다시 만들지 않는다 (SQLite)")
+unsure_ = [{"name": "가", "nation": "프랑스", "why": "1998 월드컵 우승", "src": "AI 지식"},
+           {"name": "나", "nation": "브라질", "why": "2005 발롱도르", "src": "나무위키"},
+           {"name": "다", "nation": "프랑스", "why": "월드컵 우승", "src": "AI 지식"}]
+check([p_["name"] for p_ in namu_finder.verify_knowledge("월드컵 우승한 프랑스 선수", unsure_)] == ["가", "나"]
+      and chat_.calls[-1] == "namu_verify",
+      "AI 지식 확인: 발췌에 근거가 없는 'AI 지식' 선수만 LLM 에 한 번 더 — 확실하다고 고른 번호만 남기고 나무위키 근거 선수는 그대로")
+from services.aisearch import confirm as ai_confirm, facts as ai_facts, route as ai_route  # noqa: E402
+from services.explore import ranker_stat  # noqa: E402
+
+route_tcs = [{"id": 40584, "name": "Ballon d'Or", "kind": "시즌"}, {"id": 40193, "name": "네라주리 트레블", "kind": "관계"}]
+routes_ = {q_: ai_route(q_, parse_rules(q_, opts, route_tcs, {})) for q_ in (
+    "랭커가 골을 많이 넣는 윙어", "패스 성공률이 높은 중앙 미드필더", "드리블이 좋은 브라질 윙어", "일본 출신 미드필더",
+    "현역 공격수", "발롱도르 받은 선수", "현역 최고의 스트라이커", "트레블 달성한 공격수")}
+check(list(routes_.values()) == ["ranker", "ranker", "ability", "facts", "facts", "namu", "namu", "namu"]
+      and ranker_stat("랭커가 골을 많이 넣는 윙어") == "goal" and ranker_stat("유효슈팅이 많은 스트라이커") == "effective_shoot"
+      and ranker_stat("블록을 많이 하는 센터백") == "block" and ranker_stat("드리블이 좋은 윙어") is None
+      and ranker_stat("빌드업이 좋은 골키퍼") is None
+      and ai_facts(parse_rules("현역 공격수", opts, route_tcs, {}), "현역 공격수") is None
+      and ai_facts(parse_rules("트레블 달성한 공격수", opts, route_tcs, {}), "트레블 달성한 공격수") is not None,
+      "AI 찾기 길 고르기: 랭커 기록 말(골을 많이 · 성공률이 높은) → 랭커 기록, 능력치(드리블이 좋은) → 카드 능력치, 국적 · 포지션 · "
+      "현역 → 데이터센터 조건 검색, 수상 · 우승 · '최고의' → 나무위키 → AI 명단 ('골키퍼'의 '골'은 골이 아니다)")
+act_cat = SimpleNamespace(seasons={101: {"className": "ICON (ICON)"}, 300: {"className": "25 LIVE (25 LIVE)"},
+                                   826: {"className": "26 TOTS (26 Team Of The Season)"}, 270: {"className": "22 LIVE (22 LIVE)"}},
+                          by_pid={7: [101000007], 8: [300000008], 9: [270000009], 10: [826000010, 270000010]})
+check(active_pids(act_cat) == {8, 10},
+      "현역 = 최근 두 해(26 · 25)의 현역 시즌(LIVE · TOTS …) 카드가 있는 선수 — 22 LIVE 가 마지막인 선수 · 아이콘만 있는 선수는 아니다")
+treble_res = {"players": [{"pid": 1, "name": "인테르 선수"}, {"pid": 2, "name": "잘못 넣은 선수"}], "dropped": []}
+kept_ = ai_confirm(treble_res, {1}, Filters(teamcolor_any=((40193, "네라주리 트레블"),)))
+check([p_["name"] for p_ in kept_] == ["인테르 선수"] and treble_res["dropped"][0]["name"] == "잘못 넣은 선수"
+      and "네라주리 트레블" in treble_res["dropped"][0]["reason"],
+      "AI 명단 확인: 지식이 팀컬러(트레블)로도 있으면 그 팀컬러 카드가 없는 선수는 '뺀 선수'로 (AI 가 잘못 넣은 것 — 트레블에 벤제마)")
 tc_level = {"level": 4, "count": 11, "effects": ["전체 능력치 +4", "볼 컨트롤 +3"]}
 enh_level = {"level": 2, "count": 8, "effects": ["전체 능력치 +4"]}
 cond = {"grade": 5, "enh_min": 8, "enh": {"name": "금빛 물결"}, "enh_level": enh_level, "tc": {"name": "첼시"},
@@ -747,6 +842,12 @@ row = ui_parts.card_row({"name": "가", "player_id": "1"}, {"summary": {"스피�
                         tc_summary={"패스": 5})
 check('<span>패스 <b class="up" title="팀컬러 +5">95</b>' in row and f"<span>스피드 {num(100)}" in row,
       "선수 줄: 팀컬러로 오른 요약 능력치(특정 능력치 효과 포함)는 더해서 초록으로")
+row_a5 = ui_parts.card_row({"name": "가", "player_id": "1"}, {"summary": {"스피드": 100}}, grade=3, adapt=5)
+row_on = ui_parts.card_row({"name": "가", "player_id": "1"}, {"summary": {"스피드": 100}}, grade=8, ovr=120 + GRADE_OVR[8],
+                           position="ST", on_card=True)
+check(f"<span>스피드 {num(100 + GRADE_OVR[3] + 4)}" in row_a5 and 'class="fc-prow oncard"' in row_on
+      and f'<div class="ov"><b>{120 + GRADE_OVR[8]}</b><span class="fw">ST</span>' in row_on,
+      "선수 줄: 스쿼드의 요약 능력치는 강화 + 적응도 5(+4)를 숫자에 · 카드 그림 위에 OVR(강화 반영) · 포지션 (파워 랭킹 · 선수 찾기)")
 chelsea = ("첼시", 4, ["전체 능력치 +4", "볼 컨트롤 +3", "크로스 +3"])
 line = applied_html({"groups": {"소속": [{"name": chelsea[0], "level": 4, "count": 11, "effects": chelsea[2], "icon": ""}],
                                 "강화": [], "특성": []}, "unknown": 2})
@@ -756,9 +857,9 @@ check(">첼시</b>" in line and "4단계" in line and "전체 능력치 +4, 볼 
       "AI 추천 스쿼드 · 자리별 선수: 적용되는 팀컬러(소속 · 강화 · 특성)와 효과를 그대로 (전체 + 팀컬러별 능력치)")
 board = summary_html({"slots": {"RAM": {"pay": 33, "player": {"name": "카카"}}, "LAM": {"pay": 23, "player": {"name": "뎀벨레"}}},
                       "team": {"groups": {}}, "pay": 56, "pay_known": 2, "filled": 2, "avg": 131.4, "all_exact": True},
-                     lead='<div><span>총 시세</span><b>6,499만</b></div>', avg_label="평균 OVR (자리 · 강화 · 팀컬러 반영)")
+                     lead='<div><span>총 시세</span><b>6,499만</b></div>')
 check(board.index("총 시세") < board.index("평균 OVR") < board.index("총 급여") and ">56</b> <small>/ 310" in board
-      and "RAM 카카" in board and "자리 · 강화 · 팀컬러 반영" in board,
+      and "RAM 카카" in board and "평균 OVR (자리 · 강화 · 적응도 5 · 팀컬러)" in board,
       "AI 추천 스쿼드: 스쿼드 메이커와 같은 요약 칸 — 총 시세 / 예산 · 평균 OVR · 총 급여 / 310 (게이지) · 최대 · 최소 급여 선수")
 from services.teamcolor import squad_teamcolors  # noqa: E402
 
@@ -769,6 +870,15 @@ check(ovr_at("LCM", 5, grid) == (117 + GRADE_OVR[5], True) and ovr_at("ST", 1, N
 check(slot_ovr({"ovr": 125, "usage_position": "ST"}, "LS", 3) == (125 + GRADE_OVR[3], True)
       and slot_ovr({"ovr": 120, "positions": [("CAM", 120)]}, "ST", 1) == (120, False),
       "AI 추천 스쿼드도 같은 자리 OVR — 데일리 차트 카드는 쓰인 포지션의 OVR")
+from data_prep.tactics import SQUAD_ADAPT  # noqa: E402
+from views.pitch import PITCH_JS  # noqa: E402
+
+check(SQUAD_ADAPT == 5 and ovr_at("LCM", 5, grid, adapt=SQUAD_ADAPT) == (117 + GRADE_OVR[5] + 4, True)
+      and ovr_at("RB", 3, None, [("ST", 110)], 105, adapt=SQUAD_ADAPT) == (105 + GRADE_OVR[3] + 4, False)
+      and slot_ovr({"ovr": 125, "usage_position": "ST"}, "LS", 3, SQUAD_ADAPT) == (125 + GRADE_OVR[3] + 4, True),
+      "스쿼드의 자리 OVR 에는 적응도 5(+4) — 등록 선수는 경기 없이도 적응도 5 (2025 겨울 업데이트 · 데이터센터 적응도는 1 · 5 두 단계)")
+check("[...data.slots].sort((a, b) => a.y - b.y)" in PITCH_JS,
+      "경기장: 위에서 아래 순서로 그린다 — 자리를 붙여 놓아도 아래 카드의 OVR 을 위 카드의 시세 줄이 가리지 않게")
 check(parse_foot("<strong>L5</strong> – R3") == {"L": 5, "R": 3, "main": "L"} and parse_foot("L5 - <strong>R5</strong>")["main"] == "R",
       "주발 — 굵은 쪽이 주발 (선수 검색 · 선수 정보 둘 다)")
 gold = parse_teamcolor_detail('<div class="tit"><strong>금빛 물결 : </strong><span>8강 이상의 선수들로 구성된 팀컬러입니다.</span></div>'
@@ -789,6 +899,14 @@ club, wave = team["groups"]["소속"][0], team["groups"]["강화"][0]
 check(club["count"] == 6 and club["level"] == 2 and club["next"]["count"] == 8 and wave["count"] == 7 and wave["level"] == 1
       and team["unknown"] == 1,
       "팀컬러: 클럽 6명 → 2단계(다음 8명), 8강 이상 7명 → 금빛 물결 1단계, 팀컬러를 모르는 선수는 따로 센다")
+pooled_ = [{"name": f"작은 클럽{i}", "grade": 1, "code": f"S{i}",
+            "teamcolors": {"소속": [{"id": 90000000, "name": "단일팀"}, {"id": 91000000, "name": "단일국가"}], "관계": []}}
+           for i in range(11)]
+single_ = {"levels": [{"level": 4, "count": 11, "effects": ["전체 능력치 +4", "스태미너 +3", "적극성 +3"]}]}
+team_p = squad_teamcolors(pooled_, tcs, {90000000: single_, 91000000: single_})
+check(team_p["groups"]["소속"] == [] and team_p["need_detail"] == [],
+      "팀컬러: 단일팀 · 단일국가(따로 팀컬러가 없는 작은 클럽 · 나라를 묶은 이름)는 세지 않는다 — 서로 다른 클럽 선수 11명에게 "
+      "없는 4단계(+4)가 붙고, 목록에 없는 번호라 상세를 2초마다 다시 묻던 것")
 
 from services.cardinfo import bonus_stats  # noqa: E402
 
@@ -814,6 +932,14 @@ check(sdb.put_teamcolors([{"id": 1, "name": "가", "kind": "클럽"}]) == [] and
       [{"id": 1, "name": "가", "kind": "클럽"}, {"id": 2, "name": "나", "kind": "국가"}]) == [2]
       and {t["id"]: bool(t["first_seen"]) for t in sdb.teamcolors()[0]} == {1: False, 2: True},
       "팀컬러 목록을 DB 에 — 다시 받을 때 새로 생긴 팀컬러만 '처음 본 날'과 함께 더한다")
+from services.teamcolor import TeamColorService  # noqa: E402
+
+loose_svc = TeamColorService(None, sdb)
+loose_svc._keep(1, {"levels": [{"level": 1, "count": 3, "effects": ["전체 능력치 +1"]}]})
+loose_svc._keep(777, {"levels": [{"level": 1, "count": 3, "effects": ["전체 능력치 +2"]}]})
+check(set(loose_svc.details([1, 777])) == {1, 777} and sdb.teamcolor_details([777]) == {} and 777 in loose_svc._loose
+      and 1 not in loose_svc._loose,
+      "팀컬러 상세: 목록에 있는 번호는 DB 에, 목록에 아직 없는 번호(새 팀컬러)는 메모리에 — 받은 상세를 잃어 다시 묻지 않는다")
 sdb.save_squad("내 스쿼드", {"formation": "4-4-2", "squad": {"GK": {"pid": "1", "grade": 3}}})
 saved_squads = sdb.squads()
 sdb.delete_squad("내 스쿼드")
@@ -1031,6 +1157,14 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
           and any("1차 나무위키" in m.value and "3차 FC 온라인 DB" in m.value for m in at.markdown)
           and any("나무위키" in c.value and "CC BY-NC-SA" in c.value for c in at.caption),
           "AI로 찾기 (F2011): 1차 나무위키 → 2차 AI 명단 → 3차 FC 온라인 DB — 세 단계 칸 · 손흥민 카드 타일 · 출처(라이선스)")
+    namu_calls = list(fake_namu.calls)
+    at.text_input(key="q").input("랭커가 골을 많이 넣는 선수").run()
+    at.button(key="ai_search").click().run()
+    found_rk = at.session_state["explore_results"] or {}
+    check(not at.exception and found_rk.get("mode") == "ranker" and found_rk.get("stat") == "goal"
+          and any(k.startswith("air0_") for k in keys(at)) and fake_namu.calls == namu_calls
+          and any("랭커 기록으로 줄 세웠습니다" in m.value for m in at.markdown),
+          f"AI로 찾기: '랭커가 골을 많이 넣는 선수' → 랭커 기록 순위 (나무위키 · LLM 을 거치지 않는다 · {len(found_rk.get('rows', []))}장)")
 
     at.text_input(key="q").input("태클이 좋은 수비형 미드필더").run()
     at.button(key="q_clear").click().run()   # AI 결과 지우기
@@ -1093,10 +1227,13 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
                                   "stats": {"짧은 패스": 80}, "skill_moves": 4})
     squad_state[code]["grade"] = 5
     at.run()
-    expect = 108 + GRADE_OVR[5]
+    expect = 108 + GRADE_OVR[5] + 4
     check(any(s_["code"] == code and s_["sub"].startswith(f"{expect} · ") for s_ in pitch_slots_of(at))
-          and any(f">{expect}<small>{code} OVR" in m.value for m in at.markdown),
-          f"스쿼드: {code} 자리 OVR = 그 포지션의 OVR 108 + 5강({GRADE_OVR[5]}) = {expect} — 경기장 · 목록 모두")
+          and any(f">{expect}<small>{code} OVR" in m.value for m in at.markdown)
+          and any("적응도 5" in c.value for c in at.caption)
+          and any("평균 OVR (자리 · 강화 · 적응도 5 · 팀컬러)" in m.value for m in at.markdown),
+          f"스쿼드: {code} 자리 OVR = 그 포지션의 OVR 108 + 5강({GRADE_OVR[5]}) + 적응도 5(+4) = {expect} — 경기장 · 목록 · "
+          "안내 모두 (등록 선수는 적응도 5)")
     card_html = next(s_["html"] for s_ in pitch_slots_of(at) if s_["code"] == code)
     start = card_html.find('<div class="ov">')
     left_stack = card_html[start: card_html.find("</div>", start)]
@@ -1229,8 +1366,8 @@ with patch.object(llm, "make_chat_model", lambda s: FakeChat()), patch.object(ll
                   for m in at.markdown),
           "강화 시뮬: 단계(+N → +N+1)마다 시도 · 성공 · 실패 · 성공 비율과 이론 확률 표 (전체 비율은 쉬운 단계가 섞여 높게 보여서)")
     at.button(key="nav_players").click().run()
-    check(not at.exception and any('class="fc-prow"' in m.value for m in at.markdown) or not at.session_state.get("pl_page") is None,
-          "선수 찾기: 공식 스쿼드 메이커처럼 선수 줄 목록")
+    check(not at.exception and any('class="fc-prow oncard"' in m.value for m in at.markdown),
+          "선수 찾기: 공식 스쿼드 메이커처럼 선수 줄 목록 — 카드 그림 위에 OVR(강화 반영) · 포지션 (파워 랭킹 줄처럼)")
     at.button(key="nav_favorites").click().run()
     check(f"favs_{a['player_id']}" in keys(at), "즐겨찾기: 담은 선수가 보인다")
     at.button(key="nav_me").click().run()

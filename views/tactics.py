@@ -3,7 +3,8 @@
 스쿼드 메이커 (공식 https://fconline.nexon.com/squadmaker 를 참고):
 - 포메이션은 공식 33개(4백 · 3백 · 5백)와 같은 배치. 경기장에서 선수 얼굴을 끌어 다른 자리에 놓으면 그 자리의 포지션으로 바뀌고,
   포지션이 바뀌면 포메이션도 다시 찾는다 (맞는 포메이션이 없으면 '사용자 지정'). 선수가 있는 자리에 놓으면 둘이 자리를 바꾼다.
-- 자리마다 그 포지션에서의 OVR (카드의 포지션별 오버롤 16칸 + 강화) — 경기장 · 목록 · 평균 OVR · AI 추천 · AI 전술에 모두 같은 값.
+- 자리마다 그 포지션에서의 OVR (카드의 포지션별 오버롤 16칸 + 강화 + 적응도 5 + 팀컬러) — 경기장 · 목록 · 평균 OVR · AI 추천 ·
+  AI 전술에 모두 같은 값. 스쿼드에 등록한 선수는 적응도 5 (2025 겨울 업데이트 — 모든 능력치 +4, data_prep.tactics.SQUAD_ADAPT).
   카드 상세를 아직 못 받은 카드는 선수 검색의 포지션 목록, 그것도 없으면 대표 OVR 로 두고 * 를 붙인다 (추정).
 - 총 급여 / 310 (넘으면 '초과') · 최대 · 최소 급여 선수. 급여는 데이터센터에서 받은 최신 값 — 로스터 패치로 바뀌면
   바뀐 값과 전 값을 함께 보여 준다 (FcDb.card_pay_history).
@@ -28,8 +29,8 @@ from data_prep.enhance import GRADE_OVR
 from data_prep.market import bp
 from data_prep.nexon_api import ACTION_IMAGE
 from data_prep.players import GROUP_OF, is_live_season, season_short, stat_values
-from data_prep.tactics import (BASE_POSITION, FORMATION_GROUPS, FORMATIONS, LINE, PLAY_STYLES, TEAM_TACTICS, formation_of,
-                               ovr_at, position_at, slot_xy)
+from data_prep.tactics import (BASE_POSITION, FORMATION_GROUPS, FORMATIONS, LINE, PLAY_STYLES, SQUAD_ADAPT, TEAM_TACTICS,
+                               formation_of, ovr_at, position_at, slot_xy)
 from services.ai import recommend_tactics
 from services.cardinfo import bonus_stats
 from services.finder import Filters
@@ -350,8 +351,9 @@ def applied_html(team: dict) -> str:
 def _teamcolor_ovrs(ctx: Ctx, slots: dict, team: dict, ask: bool = True) -> list[tuple[int, tuple]]:
     """적용되는 팀컬러(소속 · 강화 · 특성마다 하나)의 효과를 그 팀컬러에 든 선수의 자리 OVR 에 더한다 (공식 스쿼드 메이커처럼).
 
-    '전체 능력치 +N' 은 OVR 에 그대로 +N. 특정 능력치만 오르는 효과는 포지션마다 OVR 에 미치는 정도가 달라, 데이터센터 계산을
-    뒤에서 받아 그 자리 포지션의 값으로 바꾼다 (받기 전에는 * 표시). ask=False(팀컬러 인원이 아직 바뀌는 중)면 받아 둔 것만
+    자리 OVR(slots 의 ovr)은 이미 강화 · 적응도 5 까지 넣은 값이다. '전체 능력치 +N' 은 OVR 에 그대로 +N. 특정 능력치만 오르는
+    효과는 포지션마다 OVR 에 미치는 정도가 달라, 데이터센터 계산(강화 · 적응도 5 · 팀컬러 — 게임의 스쿼드와 같은 조합)을 뒤에서
+    받아 그 자리 포지션의 값으로 바꾼다 (받기 전에는 * 표시). ask=False(팀컬러 인원이 아직 바뀌는 중)면 받아 둔 것만
     쓰고 새로 묻지 않는다. 돌려주는 값: 아직 받는 중인 (카드, 조합)."""
     applied = {group: next((e for e in team["groups"].get(group, []) if e["level"]), None) for group in GROUPS}
     waiting = []
@@ -369,7 +371,7 @@ def _teamcolor_ovrs(ctx: Ctx, slots: dict, team: dict, ask: bool = True) -> list
             s["tc_summary"] = {k: boosted[k] - plain[k] for k in boosted if boosted[k] != plain.get(k)}
         if s["ovr"] is None:
             continue
-        combo = (s["grade"], 1, (joined["소속"]["id"], joined["소속"]["level"]) if "소속" in joined else (0, 0),
+        combo = (s["grade"], SQUAD_ADAPT, (joined["소속"]["id"], joined["소속"]["level"]) if "소속" in joined else (0, 0),
                  (joined["강화"]["id"], joined["강화"]["level"]) if "강화" in joined else (0, 0),
                  joined["특성"]["id"] if "특성" in joined else 0)
         spid = int(s["player"]["player_id"])
@@ -427,7 +429,7 @@ def chips_html(view: dict, formation: str) -> str:
     return f'<div class="fc-sqchips">{"".join(parts)}</div>'
 
 
-def summary_html(view: dict, lead: str = "", avg_label: str = "평균 OVR (자리 · 강화 반영)") -> str:
+def summary_html(view: dict, lead: str = "", avg_label: str = "평균 OVR (자리 · 강화 · 적응도 5 · 팀컬러)") -> str:
     """평균 OVR · 총 급여(게이지) · 최대 · 최소 급여 선수 · 팀컬러(소속 · 강화 · 특성 적용 인원) · 급여가 바뀐 선수.
     lead 는 맨 앞에 더 넣을 칸 (AI 추천: 총 시세 / 예산)."""
     slots = view["slots"]
@@ -635,7 +637,8 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
     infos = ctx.cards.get(spids)
     cards = {code: get_player(ctx, str(p["card"]["spid"])) for code, p in picks.items()}
     slots = {code: {"player": cards[code], "info": infos.get(p["card"]["spid"]), "grade": p["grade"],
-                    "ovr": p.get("ovr") or (p["card"].get("ovr") or 0) + GRADE_OVR[p["grade"]], "exact": p.get("exact", True)}
+                    "ovr": p.get("ovr") or (p["card"].get("ovr") or 0) + GRADE_OVR[p["grade"]] + SQUAD_ADAPT - 1,
+                    "exact": p.get("exact", True)}
              for code, p in picks.items()}
     team = team_of(ctx, slots)
     exact_jobs = _teamcolor_ovrs(ctx, slots, team, settled(ctx, team))
@@ -656,7 +659,7 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
     spent = min(100, round(100 * total / budget)) if budget else 0
     lead = (f'<div><span>총 시세</span><b>{escape(bp(total))}</b> <small>/ 예산 {escape(bp(budget))}</small>'
             f'<div class="fc-gauge"><i style="width:{spent}%"></i></div></div>')
-    st.markdown(summary_html(view, lead=lead, avg_label="평균 OVR (자리 · 강화 · 팀컬러 반영)"), unsafe_allow_html=True)
+    st.markdown(summary_html(view, lead=lead), unsafe_allow_html=True)
     st.markdown(applied_html(team), unsafe_allow_html=True)
     for note in result["notes"]:
         st.caption(f"⚠️ {note}")
@@ -687,7 +690,7 @@ def _squad_result(ctx: Ctx, result: dict) -> None:
                                           pay=card.get("pay"), exact=s["exact"], ovr_label=f"{code} OVR",
                                           foot=card.get("foot"), crests=crests_of(ctx, s["info"]), wait_text="",
                                           note=f"{usage}{bp(p['price'])}{tc}", compact=True,
-                                          tc_summary=s.get("tc_summary")), unsafe_allow_html=True)
+                                          tc_summary=s.get("tc_summary"), adapt=SQUAD_ADAPT), unsafe_allow_html=True)
     explained = result.get("explain")
     if explained:
         st.markdown(explained["answer"])
@@ -777,7 +780,7 @@ def _slot_list(ctx: Ctx, codes: list[str], view: dict, ns: str = "tac") -> None:
                 st.markdown(ui_parts.card_row(slot["player"], slot["info"], grade=slot["grade"], ovr=slot["ovr"], position=code,
                                               pay=slot["pay"], foot=slot["foot"], crests=crests_of(ctx, slot["info"]),
                                               exact=slot["exact"], note=note, ovr_label=f"{code} OVR", compact=True,
-                                              tc_summary=slot.get("tc_summary")),
+                                              tc_summary=slot.get("tc_summary"), adapt=SQUAD_ADAPT),
                             unsafe_allow_html=True)
                 st.button(f"{slot['player']['name']} 상세 보기", key=f"{ns}_open_{code}", width="stretch",
                           on_click=open_player, args=(slot["player"]["player_id"],))
@@ -921,7 +924,7 @@ def _place_list(ctx: Ctx, ns: str, code: str, cands: list[dict], view: dict, gra
     for c in cands:
         info, row = infos.get(c["spid"]) or {}, known.get(c["spid"]) or {}
         ovr, exact = ovr_at(code, grade, info.get("position_ovr"), row.get("positions"),
-                            info.get("ovr") or row.get("ovr") or c.get("ovr"))
+                            info.get("ovr") or row.get("ovr") or c.get("ovr"), adapt=SQUAD_ADAPT)
         pay = row.get("pay") if row.get("pay") is not None else info.get("pay", c.get("pay"))
         rows.append((c, info, row, ovr, exact, pay))
     if by_ovr_first:
@@ -948,7 +951,7 @@ def _place_list(ctx: Ctx, ns: str, code: str, cands: list[dict], view: dict, gra
         with i_col.popover("ⓘ", width="stretch", help="선수 정보"):
             st.markdown(ui_parts.card_row(p, info or None, grade=grade, ovr=ovr, position=code, pay=pay,
                                           foot=info.get("foot_lr") or row.get("foot"), crests=crests, exact=exact,
-                                          ovr_label=f"{code} OVR", compact=True), unsafe_allow_html=True)
+                                          ovr_label=f"{code} OVR", compact=True, adapt=SQUAD_ADAPT), unsafe_allow_html=True)
             if st.button("선수 상세 페이지 →", key=f"place_open_{key}_{c['spid']}", width="stretch"):
                 _close_place()
                 open_player(p["player_id"])
@@ -1032,7 +1035,7 @@ def squad_board(ctx: Ctx, ns: str = "tac", marks: bool = True) -> dict:
     if placing and placing.get("ns") == ns and placing.get("code") in codes:   # 닫을 때까지 열어 둔다
         place_dialog(ctx, ns, placing["code"], view)
 
-    pitch_col, list_col = st.columns([1.1, 1], gap="large")
+    pitch_col, list_col = st.container(key="sqboard").columns([1.1, 1], gap="large")   # 1100px 이하는 위아래 (ui_parts.css)
     with pitch_col:
         st.caption("카드를 끌어 다른 자리에 놓으면 포지션 · 자리 OVR 이 바뀝니다 · 카드 밑은 시세 · 구단가치 중 비율")
         ovrs = {code: (s["ovr"], s["exact"]) for code, s in view["slots"].items()}
@@ -1044,7 +1047,8 @@ def squad_board(ctx: Ctx, ns: str = "tac", marks: bool = True) -> dict:
         pitch(f"{ns}_pitch", pitch_slots(codes, players, formation if formation in FORMATIONS else None, grades, ovrs, extras),
               on_move=partial(_on_drop, ns), on_open=partial(_open_slot, ns))
         st.markdown(chips_html(view, formation), unsafe_allow_html=True)
-        st.caption("카드의 숫자는 그 자리에서의 OVR(강화 포함)입니다. 카드를 누르면 선수 상세로 갑니다."
+        st.caption("카드의 숫자는 그 자리에서의 OVR(강화 · 적응도 5 · 팀컬러 포함)입니다 — 스쿼드에 등록한 선수는 적응도 5"
+                   "(모든 능력치 +4)로 게임과 같습니다. 카드를 누르면 선수 상세로 갑니다."
                    + (" * 는 카드 상세를 받기 전의 추정값입니다." if marks else ""))
     with list_col:
         st.markdown(f"**자리별 선수** — {escape(formation)} · 공격수부터 · 줄을 누르면 선수 상세 · '➕ 추가' · '✏️ 편집'으로 "
@@ -1078,7 +1082,8 @@ def my_squad(ctx: Ctx, account: dict) -> None:
         st.session_state.me_loaded = account["ouid"]
         with st.spinner("최근 공식경기 선발을 불러오는 중…"):
             _fill_mine(ctx, ns)
-    f_col, r_col, x_col, s_col, t_col = st.columns([1.7, 1.2, 1, 1.4, 1.6], vertical_alignment="bottom")
+    f_col, r_col, x_col, s_col, t_col = st.container(key="wrap_metop").columns([1.7, 1.2, 1, 1.4, 1.6],
+                                                                             vertical_alignment="bottom")
     _formation_select(f_col, ns)
     r_col.button("🔄 다시 불러오기", key="me_reload", on_click=_fill_mine, args=(ctx, ns), width="stretch",
                  help=f"{account['nickname']}의 최근 공식경기 선발로 다시 (고친 것은 사라집니다 — 먼저 저장하세요)")
@@ -1159,7 +1164,8 @@ def render(ctx: Ctx) -> None:
 
 
 def squad_facts(view: dict) -> dict:
-    """AI 전술 추천에 넘길 스쿼드 사실 — 자리마다 (그 자리 OVR, 강화, 정확한지) · 평균 OVR · 총 급여 · 적용 팀컬러."""
+    """AI 전술 추천에 넘길 스쿼드 사실 — 자리마다 (그 자리 OVR(강화 · 적응도 5 · 팀컬러), 강화, 정확한지) · 평균 OVR · 총 급여 ·
+    적용 팀컬러."""
     applied = []
     for group in GROUPS:
         best = next((e for e in view["team"]["groups"].get(group, []) if e["level"]), None)

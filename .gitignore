@@ -3,7 +3,12 @@ storage/
 static/cache/
 __pycache__/
 *.pyc
+# 가상환경 — 어떤 이름으로 만들어도 올리지 않는다
 .venv/
+venv/
+env/
+ENV/
+.virtualenv/
 *.db
 *.db-wal
 *.db-shm

@@ -16,13 +16,22 @@ st.set_page_config(page_title="FC LAB — FC 온라인 선수 분석", page_icon
                    initial_sidebar_state="collapsed")
 st.set_option("client.showErrorDetails", "none")
 
+import runtime_guard  # noqa: E402
+
+runtime_guard.quiet_connection_reset()   # 브라우저 연결이 갑자기 끊길 때의 WinError 10054 트레이스백 (무시해도 되는 것)
+changed = runtime_guard.reload_changed()   # 켜 둔 채 코드가 바뀌었으면 새로 고쳐도 새 코드로 (아래 import 가 다시 읽는다)
+
 import ui_parts  # noqa: E402
 from views import common, compare, favorites, grow, home, me, player, players, ranking, tactics  # noqa: E402
 
+runtime_guard.remember()
 PAGES = {"home": home.render, "players": players.render, "player": player.render, "ranking": ranking.render,
          "compare": compare.render, "tactics": tactics.render, "grow": grow.render, "favorites": favorites.render,
          "me": me.render}
 
+if changed:
+    st.toast("코드가 바뀌어 새로 읽었습니다." + (" 데이터 쪽(서비스) 코드도 바뀌었으니, 이상하면 앱을 한 번 다시 켜 주세요."
+                                             if runtime_guard.needs_restart(changed) else ""), icon="🔄")
 ctx = common.boot()
 st.markdown(ui_parts.css(ctx.theme), unsafe_allow_html=True)
 common.top_bar()

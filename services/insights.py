@@ -45,7 +45,7 @@ def position_usage(rows: list[dict]) -> list[dict]:
 # ── 스카우트 보드 ───────────────────────────────────────────────
 
 def leaderboard(players: list[dict], group: str | None, kind: str, sort_key: str, min_matches: int = 5,
-                legends: set[int] | None = None) -> list[dict]:
+                legends: set[int] | None = None, actives: set[int] | None = None) -> list[dict]:
     """포지션 그룹 · 구분(현역/레전드)으로 거르고, 랭커 스탯 하나로 줄 세운다.
 
     선방률로 줄 세울 때는 선방 표본(상대 유효슈팅)이 충분한 골키퍼를 앞에, 표본이 없는 골키퍼는 랭커 경기 수 순으로 뒤에 둔다.
@@ -64,7 +64,8 @@ def leaderboard(players: list[dict], group: str | None, kind: str, sort_key: str
             continue
         # 레전드 = 아이콘 카드가 있는 선수의 모든 시즌 카드 (legends 를 주면) — 없으면 아이콘 시즌 카드만
         legend = p.get("pid") in legends if legends is not None else "ICON" in p["season"]
-        if (kind == "현역" and legend) or (kind == "레전드" and not legend):
+        active = p.get("pid") in actives if actives is not None else not legend   # 현역 = 최근 두 해의 현역 카드 (주면)
+        if (kind == "현역" and not active) or (kind == "레전드" and not legend):
             continue
         rows.append({"player": p, **values, "points": values["goal"] + values["assist"],
                      "match_count": p["ranker"]["match_count"], "save_rate": saves})

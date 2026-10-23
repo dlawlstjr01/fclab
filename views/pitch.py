@@ -13,7 +13,7 @@ from html import escape
 import streamlit as st
 
 import ui_parts
-from data_prep.tactics import ZONE_PRIORITY, ZONES, ovr_at, slot_xy
+from data_prep.tactics import SQUAD_ADAPT, ZONE_PRIORITY, ZONES, ovr_at, slot_xy
 from views.common import Ctx, browser_component
 
 # 경기장 그림 위 % ↔ 공식 좌표 (세로 0 = 공격 라인 ~ 115 = 골키퍼, 가로 0~100).
@@ -73,8 +73,9 @@ export default function(component) {
   if (!root) { root = document.createElement("div"); root.className = "fc-pitch2"; parentElement.appendChild(root); }
   const zones = data.zones.map((z) =>
     `<div class="zone" data-code="${z.code}" style="left:${z.x0}%;top:${z.y0}%;width:${z.x1 - z.x0}%;height:${z.y1 - z.y0}%">${z.code}</div>`).join("");
-  // 카드 HTML 은 앱(파이썬)이 만든다 — 이름 같은 값은 거기서 이스케이프했다
-  const slots = data.slots.map((s) =>
+  // 카드 HTML 은 앱(파이썬)이 만든다 — 이름 같은 값은 거기서 이스케이프했다.
+  // 위에서 아래 순서로 그린다 — 아래 카드가 위 카드의 시세 줄을 덮어, 자리를 붙여 놓아도 아래 카드의 OVR 이 가려지지 않는다
+  const slots = [...data.slots].sort((a, b) => a.y - b.y).map((s) =>
     `<div class="slot${s.locked ? " locked" : ""}" data-code="${s.code}" data-x="${s.x}" data-y="${s.y}"` +
     ` style="left:${s.x}%;top:${s.y}%">${s.html}</div>`).join("");
   root.innerHTML = `<div class="mark box top"></div><div class="mark box bottom"></div><div class="mark mid"></div>` +
@@ -137,8 +138,9 @@ export default function(component) {
 
 def slot_ovrs(ctx: Ctx, codes: list[str], squad: dict[str, dict | None],
               grades: dict[str, int | None]) -> dict[str, tuple[int | None, bool]]:
-    """자리마다 (그 자리에서의 OVR + 강화, 정확한 값인지) — 카드 상세의 포지션별 OVR 16칸 → 선수 검색의 포지션 목록 →
-    대표 OVR(추정) 순. 카드 상세가 없는 카드는 받기 시작한다."""
+    """자리마다 (그 자리에서의 OVR + 강화 + 적응도 5, 정확한 값인지) — 카드 상세의 포지션별 OVR 16칸 → 선수 검색의 포지션 목록 →
+    대표 OVR(추정) 순. 스쿼드에 등록한 선수는 적응도 5 (모든 능력치 +4 — data_prep.tactics.SQUAD_ADAPT).
+    카드 상세가 없는 카드는 받기 시작한다."""
     spids = [int(p["player_id"]) for p in squad.values() if p]
     ctx.cards.want(spids)
     infos = ctx.cards.get(spids)
@@ -149,7 +151,7 @@ def slot_ovrs(ctx: Ctx, codes: list[str], squad: dict[str, dict | None],
         if p:
             info, row = infos.get(int(p["player_id"])) or {}, known.get(int(p["player_id"])) or {}
             out[code] = ovr_at(code, grades.get(code), info.get("position_ovr"), row.get("positions"),
-                               info.get("ovr") or row.get("ovr"))
+                               info.get("ovr") or row.get("ovr"), adapt=SQUAD_ADAPT)
     return out
 
 
@@ -183,7 +185,8 @@ def pitch(key: str, slots: list[dict], on_move=None, on_open=None) -> None:
     if component is None:   # 런타임 없이 — 같은 그림을 HTML 로 (끌기 없음)
         marks = ('<div class="mark box top"></div><div class="mark box bottom"></div><div class="mark mid"></div>'
                  '<div class="mark circle"></div>')
-        body = "".join(f'<div class="slot locked" style="left:{s["x"]}%;top:{s["y"]}%">{s["html"]}</div>' for s in slots)
+        body = "".join(f'<div class="slot locked" style="left:{s["x"]}%;top:{s["y"]}%">{s["html"]}</div>'
+                       for s in sorted(slots, key=lambda s: s["y"]))   # 위에서 아래로 (아래 카드가 위 카드의 시세 줄을 덮게)
         st.markdown(f"<style>{PITCH_CSS}</style><div class='fc-pitch2'>{marks}{body}</div>", unsafe_allow_html=True)
         return
     data = {"slots": slots, "zones": _zones(), "readonly": on_move is None, "clickable": on_open is not None}

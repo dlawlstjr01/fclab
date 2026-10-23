@@ -436,10 +436,12 @@ class FcDb:
                for data, detail, first, _ in rows]
         return out, max((at for *_, at in rows), default=None)
 
-    def put_teamcolor_detail(self, teamcolor_id: int, detail: dict) -> None:
+    def put_teamcolor_detail(self, teamcolor_id: int, detail: dict) -> bool:
+        """단계별 조건 · 효과를 그 팀컬러 줄에 — 목록에 없는 번호(줄이 없다)면 False."""
         with self._conn() as conn:
-            conn.execute("UPDATE teamcolors SET detail = ?, detail_at = ? WHERE id = ?",
-                         (json.dumps(detail, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), teamcolor_id))
+            cur = conn.execute("UPDATE teamcolors SET detail = ?, detail_at = ? WHERE id = ?",
+                               (json.dumps(detail, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), teamcolor_id))
+            return cur.rowcount > 0
 
     def teamcolor_details(self, ids: list[int], max_age_days: float = 30) -> dict[int, dict]:
         """받아 둔 단계별 조건 · 효과 {id: {name, description, levels, min_grade}} — max_age 안의 것만."""
